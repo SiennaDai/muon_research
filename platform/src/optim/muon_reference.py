@@ -48,6 +48,9 @@ class ReferenceMuon(torch.optim.Optimizer):
         self._diagnostic_observer = None
         self._mechanism_observer = None
         self._mechanism_update = None
+        self._snapshot_observer = None
+        self._snapshot_parameter_names = {}
+        self._snapshot_update = None
 
     def set_diagnostic_observer(self, observer):
         """Install an opt-in detached/read-only observer outside the state dict."""
@@ -56,8 +59,23 @@ class ReferenceMuon(torch.optim.Optimizer):
     def set_mechanism_observer(self, observer):
         self._mechanism_observer = observer
 
+    def set_snapshot_observer(self, observer, parameter_names):
+        """Install a read-only research-snapshot hook and id->name mapping."""
+        self._snapshot_observer = observer
+        self._snapshot_parameter_names = dict(parameter_names)
+
     def set_mechanism_update(self, update):
         self._mechanism_update = int(update)
+
+    def set_training_update(self, update):
+        """Set the absolute update for observers that need it.
+
+        The method predates the snapshot hook and is already called by
+        ``train_platform`` before every optimizer step.  Reusing it avoids a
+        second call site while preserving the existing mechanism update value.
+        """
+        self._mechanism_update = int(update)
+        self._snapshot_update = int(update)
 
     @torch.no_grad()
     def step(self, closure=None):
@@ -69,23 +87,40 @@ class ReferenceMuon(torch.optim.Optimizer):
                 grad = p.grad.float()
                 state = self.state[p]
                 if is_muon:
-                    momentum = state.get("muon_momentum", torch.zeros_like(p, dtype=torch.float32))
-                    momentum = momentum.mul(group["muon_momentum"]).add(grad)
+                    momentum_prev = state.get("muon_momentum", torch.zeros_like(p, dtype=torch.float32))
+                    momentum = momentum_prev.mul(group["muon_momentum"]).add(grad)
                     direction = grad.add(momentum, alpha=group["muon_momentum"]) if group["muon_nesterov"] else momentum
-                    update = zeropower_newton_schulz(direction, group["muon_ns_steps"], group["muon_ns_coefficients"], group["muon_eps"])
-                    updated = p.float().mul(1 - group["lr"] * group["weight_decay"]).add(update, alpha=-group["lr"])
+                    ns_output = zeropower_newton_schulz(direction, group["muon_ns_steps"], group["muon_ns_coefficients"], group["muon_eps"])
+                    updated = p.float().mul(1 - group["lr"] * group["weight_decay"]).add(ns_output, alpha=-group["lr"])
                     # Orthogonalization and this step's update use unrounded
                     # momentum; only the next step sees simulated persistence.
                     persisted = persist_state(momentum, group["state_simulation"], "muon_momentum",
                         quantization_granularity=group.get("state_quantization_granularity", "per_state_tensor"),
                         quantization_block_size=group.get("state_quantization_block_size", 2048))
+                    first_step = "muon_momentum" not in state
                     if self._mechanism_observer is not None:
-                        self._mechanism_observer(parameter=p, gradient=grad, momentum_prev=state.get("muon_momentum", torch.zeros_like(p, dtype=torch.float32)),
+                        self._mechanism_observer(parameter=p, gradient=grad, momentum_prev=momentum_prev,
                             momentum_candidate=momentum, momentum_persisted_decoded=persisted,
                             direction=direction, updated=updated, group=group, update=self._mechanism_update)
                     if self._diagnostic_observer is not None:
                         self._diagnostic_observer(parameter=p, momentum_pre=momentum, momentum_post=persisted,
                                                   updated=updated, group=group)
+                    # Research snapshot hook: runs before the in-place parameter
+                    # write and receives the exact tensors used by this step.
+                    if self._snapshot_observer is not None:
+                        self._snapshot_observer(
+                            update=self._snapshot_update,
+                            parameter_name=self._snapshot_parameter_names.get(id(p)),
+                            W_before=p,
+                            G=grad,
+                            M_prev=momentum_prev,
+                            M_t_candidate=momentum,
+                            M_t_persisted=persisted,
+                            D=direction,
+                            U=ns_output,
+                            W_after=updated,
+                            first_step=first_step,
+                        )
                     p.copy_(updated.to(p.dtype))
                     state["muon_momentum"] = persisted
                 else:

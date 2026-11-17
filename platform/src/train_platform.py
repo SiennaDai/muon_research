@@ -23,6 +23,10 @@ from optim.state_simulation import persistence_metadata
 from optim.adamw_state_diagnostics import AdamWStateDiagnostics, MuonStateDiagnostics
 from optim.muon_update_fidelity import MuonUpdateFidelityObserver, save_snapshot
 from optim.muon_mechanism import MuonMechanismObserver
+from optim.muon_snapshot_collector import (
+    MuonSnapshotCollector, SnapshotBeginContext, SnapshotRunContext,
+    resolve_snapshot_config,
+)
 
 
 class NonFiniteMetricError(RuntimeError):
@@ -166,8 +170,17 @@ def _checkpoint(cfg, model, optimizer, sampler, completed, processed, run_id, se
         "rng": rng_state(torch.cuda.is_available()), "elapsed_seconds": elapsed, "run_id": run_id, "next_segment_id": segment+1}
 
 
-def run(cfg: dict, run_dir: Path, resume: Path | None = None, max_wall_seconds: float | None = None, to_device: str = "auto", stop_at_update: int | None = None):
-    root = Path(__file__).resolve().parents[1]; run_dir = run_dir.resolve(); run_dir.mkdir(parents=True, exist_ok=True)
+def run(cfg: dict, run_dir: Path, resume: Path | None = None, max_wall_seconds: float | None = None, to_device: str = "auto", stop_at_update: int | None = None, snapshot_config_path: str | Path | None = None):
+    root = Path(__file__).resolve().parents[1]
+    run_dir = run_dir.resolve()
+    # Validate the sidecar before creating any run artifacts.  New runs default
+    # to disabled; resumes inherit the stored configuration.
+    snapshot_config = resolve_snapshot_config(
+        snapshot_config_path, run_dir=run_dir,
+        total_updates=cfg["derived"]["total_updates"], resume=resume is not None)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    source_info = source_snapshot(root)
+    environment_info = environment_snapshot()
     device = resolve_device(to_device)
     if stop_at_update is not None and not 0 < int(stop_at_update) <= int(cfg["derived"]["total_updates"]):
         raise ValueError("stop_at_update must satisfy 0 < N <= recipe total_updates")
@@ -189,6 +202,38 @@ def run(cfg: dict, run_dir: Path, resume: Path | None = None, max_wall_seconds: 
         from optim.muon_recursive import build_recursive_codecs
         recursive_codecs = build_recursive_codecs(model, cfg["optimizer"], root)
     optimizer = make_optimizer(cfg["optimizer"]["name"], groups, cfg["optimizer"], codecs=recursive_codecs)
+    # The snapshot collector must use the actual Muon group and its order, not
+    # a second parameter-filtering rule.  Build names and optimizer indices
+    # from the same ``groups`` object handed to the optimizer.
+    named_parameter_id = {}
+    for name, parameter in model.named_parameters():
+        named_parameter_id.setdefault(id(parameter), name)
+    muon_parameter_order: list[str] = []
+    name_by_id: dict[int, str] = {}
+    optimizer_param_index: dict[str, int] = {}
+    running_param_index = 0
+    for group in groups:
+        is_muon_group = group.get("optimizer_group") == "muon"
+        for parameter in group["params"]:
+            if is_muon_group:
+                parameter_name = named_parameter_id.get(id(parameter))
+                if parameter_name is None:
+                    raise ValueError("Muon group contains a parameter without a model name")
+                if parameter_name in optimizer_param_index:
+                    raise ValueError(f"duplicate Muon parameter name: {parameter_name}")
+                muon_parameter_order.append(parameter_name)
+                name_by_id[id(parameter)] = parameter_name
+                optimizer_param_index[parameter_name] = running_param_index
+            running_param_index += 1
+    muon_parameter_order = tuple(muon_parameter_order)
+    muon_group = next((group for group in optimizer.param_groups
+                       if group.get("optimizer_group") == "muon"), None)
+    optimizer_metadata = {}
+    if muon_group is not None:
+        optimizer_metadata = {key: value for key, value in muon_group.items() if key != "params"}
+        optimizer_metadata["name"] = cfg["optimizer"]["name"]
+    if snapshot_config.enabled and cfg["optimizer"]["name"] != "reference_muon":
+        raise ValueError("snapshot collection requires optimizer.name == 'reference_muon'")
     sampler = DeterministicSampler(train.num_windows, cfg["experiment"]["data_seed"], cfg["data"]["allow_repeated_epochs"])
     completed = processed = segment = 0; prior_elapsed = 0.0
     run_id = run_dir.name
@@ -219,7 +264,29 @@ def run(cfg: dict, run_dir: Path, resume: Path | None = None, max_wall_seconds: 
                 "buffer": "single FP32 decayed unpaid-residual accumulator; no FP32 momentum shadow",
                 "weighting": "A_next=mu*A+mu*e without correction; A_next=mu*e after correction"}
         grouping = {"muon_parameters": sum(r["numel"] for r in records if r["group"] == "muon"), "auxiliary_adamw_parameters": sum(r["numel"] for r in records if r["group"] == "auxiliary_adamw"), "muon_tensor_count": sum(r["group"] == "muon" for r in records), "auxiliary_adamw_tensor_count": sum(r["group"] == "auxiliary_adamw" for r in records)}
-        dump_resolved(cfg, run_dir/"resolved_config.json"); write_json(run_dir/"environment.json", environment_snapshot()); write_json(run_dir/"source.json", source_snapshot(root)); write_json(run_dir/"data_manifest.json", {k:v for k,v in manifest.items() if k != "_path"}); write_json(run_dir/"parameters.json", records); write_json(run_dir/"precision.json", {**cfg["precision"], "to_device": to_device, "device": str(device), "optimizer_state_simulation": cfg["optimizer"]["state_simulation"], "state_persistence": state_policy, "roundtrip_state_policy": state_policy["persistence_timing"], "parameter_grouping": grouping, "state_diagnostics": {"enabled": bool(cfg["logging"].get("state_diagnostics", False)), "stream": "state_diagnostics.jsonl", "timing": "detached read-only observation after FP32 moment/current update and after persistence simulation", "percentile_method": "bounded deterministic per-tensor evenly-spaced samples; exact counts/extrema/L2 reductions"}})
+        dump_resolved(cfg, run_dir/"resolved_config.json"); write_json(run_dir/"environment.json", environment_info); write_json(run_dir/"source.json", source_info); write_json(run_dir/"data_manifest.json", {k:v for k,v in manifest.items() if k != "_path"}); write_json(run_dir/"parameters.json", records); write_json(run_dir/"precision.json", {**cfg["precision"], "to_device": to_device, "device": str(device), "optimizer_state_simulation": cfg["optimizer"]["state_simulation"], "state_persistence": state_policy, "roundtrip_state_policy": state_policy["persistence_timing"], "parameter_grouping": grouping, "state_diagnostics": {"enabled": bool(cfg["logging"].get("state_diagnostics", False)), "stream": "state_diagnostics.jsonl", "timing": "detached read-only observation after FP32 moment/current update and after persistence simulation", "percentile_method": "bounded deterministic per-tensor evenly-spaced samples; exact counts/extrema/L2 reductions"}})
+    snapshot_collector = None
+    if snapshot_config.enabled or ((run_dir / "snapshots").exists() and muon_parameter_order):
+        if snapshot_config.enabled and not hasattr(optimizer, "set_snapshot_observer"):
+            raise ValueError("snapshot collection requires a ReferenceMuon optimizer")
+        snapshot_context = SnapshotRunContext(
+            run_id=run_id, segment_id=segment,
+            recipe_fingerprint=cfg["fingerprint"], data_fingerprint=manifest["fingerprint"],
+            snapshot_config_hash=snapshot_config.config_hash,
+            model_config=cfg["model"], parameter_records=records,
+            muon_parameter_order=muon_parameter_order,
+            optimizer_param_index=optimizer_param_index,
+            optimizer_metadata=optimizer_metadata,
+            train_config=cfg["train"], data_config=cfg["data"],
+            seeds={key: cfg["experiment"][key] for key in ("seed", "data_seed", "algorithm_seed")},
+            source=source_info, environment=environment_info,
+            device=str(device), precision=cfg["precision"],
+        )
+        snapshot_collector = MuonSnapshotCollector(
+            run_dir=run_dir, config=snapshot_config, context=snapshot_context)
+        snapshot_collector.scan_existing(completed_updates=completed)
+        if snapshot_config.enabled:
+            optimizer.set_snapshot_observer(snapshot_collector.observe, name_by_id)
     writer = EventWriter(run_dir/"metrics.jsonl", run_id, segment)
     state_diagnostics_enabled = bool(cfg["logging"].get("state_diagnostics", False))
     state_writer = None
@@ -316,7 +383,15 @@ def run(cfg: dict, run_dir: Path, resume: Path | None = None, max_wall_seconds: 
                 atomic_torch_save(initial_ck, run_dir/"checkpoints/initial.pt"); atomic_torch_save(initial_ck, run_dir/"checkpoints/update_000000.pt")
         while completed < cfg["derived"]["total_updates"]:
             if max_wall_seconds is not None and time.monotonic()-started >= max_wall_seconds: status, reason = "paused_budget", "max_wall_seconds reached at update boundary"; print(f"[pause] wall-clock budget reached @ step {completed}; resumable checkpoint saved"); break
-            update = completed + 1; active_update = update; attempted_processed = processed; optimizer.zero_grad(set_to_none=True); ids = sampler.take(cfg["train"]["micro_batch_size"]*cfg["train"]["accumulation_steps"]); nll_sum = 0.0; n_tokens = 0; step_started = time.monotonic()
+            update = completed + 1; active_update = update; attempted_processed = processed; optimizer.zero_grad(set_to_none=True)
+            sampler_epoch_before, sampler_offset_before = sampler.epoch, sampler.offset
+            ids = sampler.take(cfg["train"]["micro_batch_size"]*cfg["train"]["accumulation_steps"])
+            sampler_epoch_after, sampler_offset_after = sampler.epoch, sampler.offset
+            micro_batch_size = cfg["train"]["micro_batch_size"]
+            micro_batch_window_ids = tuple(
+                tuple(ids[a*micro_batch_size:(a+1)*micro_batch_size])
+                for a in range(cfg["train"]["accumulation_steps"]))
+            nll_sum = 0.0; n_tokens = 0; step_started = time.monotonic()
             for a in range(cfg["train"]["accumulation_steps"]):
                 batch_ids = ids[a*cfg["train"]["micro_batch_size"]:(a+1)*cfg["train"]["micro_batch_size"]]
                 pairs = [train.window(i) for i in batch_ids]; x=torch.stack([z[0] for z in pairs]).to(device); y=torch.stack([z[1] for z in pairs]).to(device)
@@ -329,6 +404,20 @@ def run(cfg: dict, run_dir: Path, resume: Path | None = None, max_wall_seconds: 
             grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), cfg["train"]["grad_clip_norm"]); grad_norm_value = require_finite_metric("pre_clip_grad_norm", grad_norm); clipped = grad_norm_value > cfg["train"]["grad_clip_norm"]
             lr = require_finite_metric("learning_rate", learning_rate(update,cfg["derived"]["schedule_total_updates"],cfg["optimizer"]["lr"],cfg["schedule"]["warmup_updates"],cfg["schedule"]["final_lr_ratio"],cfg["schedule"]["name"]))
             for group in optimizer.param_groups: group["lr"] = lr
+            if snapshot_collector is not None and snapshot_collector.should_collect(update):
+                snapshot_collector.begin_update(SnapshotBeginContext(
+                    update=update, segment_id=segment,
+                    tokens_this_update=n_tokens,
+                    processed_target_tokens=processed + n_tokens,
+                    learning_rate=lr, pre_clip_grad_norm=grad_norm_value,
+                    clipped=clipped, grad_clip_norm=cfg["train"]["grad_clip_norm"],
+                    window_ids=tuple(ids),
+                    micro_batch_window_ids=micro_batch_window_ids,
+                    sampler_epoch_before=sampler_epoch_before,
+                    sampler_offset_before=sampler_offset_before,
+                    sampler_epoch_after=sampler_epoch_after,
+                    sampler_offset_after=sampler_offset_after,
+                ))
             if fidelity_observer is not None: fidelity_observer.begin_update(update)
             if mechanism_observer is not None:
                 mechanism_observer.begin_update(update)
@@ -339,6 +428,8 @@ def run(cfg: dict, run_dir: Path, resume: Path | None = None, max_wall_seconds: 
             # v before persistence and its next-step persisted counterpart.
             # It runs before event serialization and never mutates scientific state.
             train_nll = require_finite_metric("train_nll", nll_sum/n_tokens)
+            if snapshot_collector is not None:
+                snapshot_collector.finish_update(update=update, train_nll=train_nll)
             if collector is not None:
                 diagnostic = collector.finish_update(update=update, processed_target_tokens=processed+n_tokens,
                     train_nll=train_nll, pre_clip_grad_norm=grad_norm_value, learning_rate=lr)
@@ -354,7 +445,7 @@ def run(cfg: dict, run_dir: Path, resume: Path | None = None, max_wall_seconds: 
                         fidelity_writer.write("muon_update_fidelity", update, processed+n_tokens,
                                               **{key: value for key, value in row.items() if key != "update"})
                 if snapshot_tensors:
-                    source = source_snapshot(root)
+                    source = source_info
                     metadata = {"update": update, "source_commit": source["upstream_commit"],
                                 "recipe_fingerprint": cfg["fingerprint"], "data_fingerprint": manifest["fingerprint"],
                                 "seeds": {key: cfg["experiment"][key] for key in ("seed", "data_seed", "algorithm_seed")},
@@ -395,10 +486,17 @@ def run(cfg: dict, run_dir: Path, resume: Path | None = None, max_wall_seconds: 
                       "diagnostic_checkpoint_policy": "not_saved_non_resumable"}
     except Exception as exc:
         status, reason = "failed", f"{type(exc).__name__}: {exc}"; write_json(run_dir/"summary.json", {"status":status,"reason":reason,"completed_updates":completed,"processed_target_tokens":processed}); raise
+    finally:
+        if snapshot_collector is not None:
+            snapshot_collector.close()
     elapsed=prior_elapsed+time.monotonic()-started
-    # A divergence artifact is terminal and non-resumable.  Do not overwrite a
-    # prior finite checkpoint with potentially invalid model/optimizer state.
-    if status != "diverged_nonfinite" and (completed > 0 or status == "paused_budget"):
+    # A divergence artifact is terminal and non-resumable.  A KeyboardInterrupt
+    # may have happened mid-update, so the in-memory model/optimizer and the
+    # already-advanced sampler need not describe the same completed update.
+    # Only checkpoints written at a complete update boundary are resumable;
+    # keep the last such checkpoint instead of overwriting it with a partial
+    # step.
+    if status not in {"diverged_nonfinite", "interrupted"} and (completed > 0 or status == "paused_budget"):
         ck=_checkpoint(cfg,model,optimizer,sampler,completed,processed,run_id,segment,elapsed,manifest,records); atomic_torch_save(ck,run_dir/"checkpoints/latest.pt"); atomic_torch_save(ck,run_dir/"checkpoints"/f"update_{completed:06d}.pt")
         if status=="completed" and cfg["checkpoint"]["save_final"]: atomic_torch_save(ck,run_dir/"checkpoints/final.pt")
     state = optimizer.recursive_state_summary() if hasattr(optimizer, "recursive_state_summary") else optimizer_state_summary(optimizer)
@@ -410,4 +508,4 @@ def run(cfg: dict, run_dir: Path, resume: Path | None = None, max_wall_seconds: 
                      **{key: value for key, value in divergence.items() if key != "processed_target_tokens"})
     writer.write("lifecycle",completed,processed,phase=status,reason=reason,wall_clock_elapsed_seconds=elapsed,divergence=divergence)
     events=[json.loads(line) for line in (run_dir/"metrics.jsonl").read_text().splitlines()]; evals=[e for e in events if e["event_type"]=="eval" and e.get("split")==cfg["data"]["validation_split"]]; train_events=[e for e in events if e["event_type"]=="train"]
-    summary={"run_id":run_id,"status":status,"reason":reason,"recipe_name":cfg["experiment"]["name"],"recipe_fingerprint":cfg["fingerprint"],"protocol_id":cfg["experiment"]["protocol_id"],"data_fingerprint":manifest["fingerprint"],"git_commit":source_snapshot(root)["upstream_commit"],"seed":cfg["experiment"]["seed"],"data_seed":cfg["experiment"]["data_seed"],"algorithm_seed":cfg["experiment"]["algorithm_seed"],"optimizer_name":cfg["optimizer"]["name"],"sequence_length":cfg["model"]["sequence_length"],"target_tokens":cfg["train"]["target_tokens"],"compute_precision":cfg["precision"]["compute"],"completed_updates":completed,"processed_target_tokens":processed,"total_updates":cfg["derived"]["total_updates"],"schedule_total_updates":cfg["derived"]["schedule_total_updates"],"elapsed_seconds":elapsed,"total_elapsed_seconds":elapsed,"initial_validation_nll":evals[0]["nll"] if evals else None,"final_validation_nll":evals[-1]["nll"] if evals else None,"best_validation_nll":min((e["nll"] for e in evals),default=None),"best_validation_update":min(evals,key=lambda e:e["nll"])["completed_updates"] if evals else None,"train_elapsed_seconds":sum(e["elapsed_seconds"] for e in train_events),"eval_elapsed_seconds":sum(e["elapsed_seconds"] for e in evals),"mean_update_seconds":sum(e["elapsed_seconds"] for e in train_events)/len(train_events) if train_events else None,"effective_tokens_per_second":processed/sum(e["elapsed_seconds"] for e in train_events) if train_events else None,"cuda_peak_allocated_bytes":torch.cuda.max_memory_allocated() if device.type=="cuda" else None,"cuda_peak_reserved_bytes":torch.cuda.max_memory_reserved() if device.type=="cuda" else None,"optimizer_state_bytes":state["unique_storage_bytes"],"optimizer_state_tensor_count":len(state["tensors"]),"max_grad_norm":max((e["pre_clip_grad_norm"] for e in train_events),default=None),"grad_clip_event_count":sum(e["clipped"] for e in train_events),"optimizer_state":state,"divergence":divergence}; write_json(run_dir/"summary.json",summary); print(f"[done] {status} | {completed}/{cfg['derived']['total_updates']} updates | {processed} tokens | {elapsed:.1f}s"); return summary
+    summary={"run_id":run_id,"status":status,"reason":reason,"recipe_name":cfg["experiment"]["name"],"recipe_fingerprint":cfg["fingerprint"],"protocol_id":cfg["experiment"]["protocol_id"],"data_fingerprint":manifest["fingerprint"],"git_commit":source_info["upstream_commit"],"seed":cfg["experiment"]["seed"],"data_seed":cfg["experiment"]["data_seed"],"algorithm_seed":cfg["experiment"]["algorithm_seed"],"optimizer_name":cfg["optimizer"]["name"],"sequence_length":cfg["model"]["sequence_length"],"target_tokens":cfg["train"]["target_tokens"],"compute_precision":cfg["precision"]["compute"],"completed_updates":completed,"processed_target_tokens":processed,"total_updates":cfg["derived"]["total_updates"],"schedule_total_updates":cfg["derived"]["schedule_total_updates"],"elapsed_seconds":elapsed,"total_elapsed_seconds":elapsed,"initial_validation_nll":evals[0]["nll"] if evals else None,"final_validation_nll":evals[-1]["nll"] if evals else None,"best_validation_nll":min((e["nll"] for e in evals),default=None),"best_validation_update":min(evals,key=lambda e:e["nll"])["completed_updates"] if evals else None,"train_elapsed_seconds":sum(e["elapsed_seconds"] for e in train_events),"eval_elapsed_seconds":sum(e["elapsed_seconds"] for e in evals),"mean_update_seconds":sum(e["elapsed_seconds"] for e in train_events)/len(train_events) if train_events else None,"effective_tokens_per_second":processed/sum(e["elapsed_seconds"] for e in train_events) if train_events else None,"cuda_peak_allocated_bytes":torch.cuda.max_memory_allocated() if device.type=="cuda" else None,"cuda_peak_reserved_bytes":torch.cuda.max_memory_reserved() if device.type=="cuda" else None,"optimizer_state_bytes":state["unique_storage_bytes"],"optimizer_state_tensor_count":len(state["tensors"]),"max_grad_norm":max((e["pre_clip_grad_norm"] for e in train_events),default=None),"grad_clip_event_count":sum(e["clipped"] for e in train_events),"optimizer_state":state,"divergence":divergence}; write_json(run_dir/"summary.json",summary); print(f"[done] {status} | {completed}/{cfg['derived']['total_updates']} updates | {processed} tokens | {elapsed:.1f}s"); return summary
