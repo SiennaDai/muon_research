@@ -1,0 +1,9 @@
+# New research data and generated outputs remain outside the platform checkout.
+/data/*
+!/data/.gitkeep
+/analysis/cache/
+/results/*
+!/results/.gitkeep
+*.py[cod]
+__pycache__/
+.venv/

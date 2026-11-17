@@ -1,0 +1,60 @@
+"""Optimizer construction with a lazy bitsandbytes boundary."""
+
+import torch
+from .adamw_reference import ReferenceAdamW
+from .muon_reference import ReferenceMuon
+
+
+BNB_DEFAULTS = {"amsgrad": False, "percentile_clipping": 100, "min_8bit_size": 4096, "block_wise": True, "is_paged": False}
+
+
+def make_optimizer(name, groups, cfg, *, codecs=None):
+    common = dict(lr=cfg["lr"], betas=tuple(cfg["betas"]), eps=cfg["eps"], weight_decay=cfg["weight_decay"])
+    if name == "torch_adamw":
+        return torch.optim.AdamW(groups, **common, fused=cfg["fused"], foreach=cfg["foreach"])
+    if name == "reference_adamw":
+        return ReferenceAdamW(groups, **common, state_simulation=cfg["state_simulation"],
+            state_quantization_granularity=cfg.get("state_quantization_granularity", "per_state_tensor"),
+            state_quantization_block_size=cfg.get("state_quantization_block_size", 2048))
+    if name == "reference_muon":
+        return ReferenceMuon(groups, **common, state_simulation=cfg["state_simulation"],
+            muon_momentum=cfg.get("muon_momentum", .95), muon_nesterov=cfg.get("muon_nesterov", True),
+            muon_ns_steps=cfg.get("muon_ns_steps", 5), muon_ns_coefficients=cfg.get("muon_ns_coefficients", [3.4445, -4.7750, 2.0315]), muon_eps=cfg.get("muon_eps", 1e-7),
+            state_quantization_granularity=cfg.get("state_quantization_granularity", "per_state_tensor"),
+            state_quantization_block_size=cfg.get("state_quantization_block_size", 2048))
+    if name == "recursive_muon":
+        if codecs is None:
+            raise ValueError("recursive_muon requires codecs")
+        from .muon_recursive import RecursiveMuon
+        return RecursiveMuon(groups, codecs, lr=cfg["lr"], betas=tuple(cfg["betas"]), eps=cfg["eps"],
+            weight_decay=cfg["weight_decay"], muon_momentum=cfg.get("muon_momentum", .95),
+            muon_nesterov=cfg.get("muon_nesterov", True), muon_ns_steps=cfg.get("muon_ns_steps", 5),
+            muon_ns_coefficients=cfg.get("muon_ns_coefficients", [3.4445, -4.7750, 2.0315]),
+            muon_eps=cfg.get("muon_eps", 1e-7),
+            recursive_error_feedback_alpha=cfg.get("recursive_error_feedback_alpha", 0.0),
+            recursive_error_feedback_mode=cfg.get("recursive_error_feedback_mode"),
+            recursive_error_feedback_interval=cfg.get("recursive_error_feedback_interval"))
+    if name in {"bnb_adamw32", "bnb_adamw8"}:
+        if not torch.cuda.is_available():
+            raise RuntimeError(f"{name} requires a supported CUDA device")
+        try:
+            import bitsandbytes as bnb
+        except ImportError as exc:
+            raise RuntimeError("bitsandbytes is not installed; install the optional GPU requirements") from exc
+        cls = bnb.optim.AdamW32bit if name.endswith("32") else bnb.optim.AdamW8bit
+        return cls(groups, **common, **BNB_DEFAULTS)
+    raise ValueError(f"unknown optimizer {name}")
+
+
+def optimizer_state_summary(optimizer) -> dict:
+    tensors, storages, logical = [], set(), 0
+    for state in optimizer.state.values():
+        for key, value in state.items():
+            if torch.is_tensor(value):
+                size = value.numel() * value.element_size()
+                logical += size
+                storage = value.untyped_storage()
+                identity = (storage.data_ptr(), storage.nbytes())
+                storages.add(identity)
+                tensors.append({"key": key, "dtype": str(value.dtype), "shape": list(value.shape), "bytes": size})
+    return {"logical_tensor_bytes": logical, "unique_storage_bytes": sum(x[1] for x in storages), "tensors": tensors}
