@@ -169,8 +169,8 @@ def test_collector_does_not_change_training_loop_or_final_checkpoint(tmp_path, m
     assert off_summary["completed_updates"] == on_summary["completed_updates"] == 3
     assert off_summary["processed_target_tokens"] == on_summary["processed_target_tokens"] == 48
     assert _train_events(off_dir) == _train_events(on_dir)
-    _assert_checkpoints_equal(_load_checkpoint(off_dir / "checkpoints/final.pt"),
-                              _load_checkpoint(on_dir / "checkpoints/final.pt"))
+    _assert_checkpoints_equal(_load_checkpoint(off_dir / "checkpoints/latest.pt"),
+                              _load_checkpoint(on_dir / "checkpoints/latest.pt"))
     manifests = sorted(p.name for p in (on_dir / "snapshots").glob("update_*.manifest.json"))
     assert manifests == ["update_000001.manifest.json",
                          "update_000002.manifest.json",

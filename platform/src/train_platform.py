@@ -375,14 +375,28 @@ def run(cfg: dict, run_dir: Path, resume: Path | None = None, max_wall_seconds: 
     divergence = None; last_finite_train_metric = None; active_update = completed; attempted_processed = processed
     print(f"[run] {run_id} | {cfg['optimizer']['name']} | {device} | {cfg['precision']['compute']} | {cfg['derived']['total_updates']} updates | schedule horizon {cfg['derived']['schedule_total_updates']} | {cfg['train']['target_tokens']} tokens")
     writer.write("lifecycle", completed, processed, phase="resume" if resume else "start", wall_clock_elapsed_seconds=prior_elapsed)
+    # Rolling checkpoint policy: one atomic ``checkpoints/latest.pt`` per run.
+    # The recipe's ``save_initial`` gates the update-0 write; ``save_final`` is
+    # intentionally superseded because the last periodic write already is the
+    # final complete-update checkpoint.
+    last_checkpoint_update = None
+    def save_latest_checkpoint(update, processed_tokens, elapsed_seconds):
+        nonlocal last_checkpoint_update
+        if last_checkpoint_update == update:
+            return False
+        checkpoint = _checkpoint(cfg, model, optimizer, sampler, update, processed_tokens,
+                                 run_id, segment, elapsed_seconds, manifest, records)
+        atomic_torch_save(checkpoint, run_dir/"checkpoints/latest.pt")
+        last_checkpoint_update = update
+        return True
     try:
         if completed == 0:
             ev = evaluate(model, val, cfg["eval"]["max_target_tokens"], cfg["eval"]["batch_size"], cfg, device); writer.write("eval", 0, 0, split=cfg["data"]["validation_split"], wall_clock_elapsed_seconds=require_finite_metric("wall_clock_elapsed_seconds", prior_elapsed+time.monotonic()-started), **ev); print(f"[eval] step 0 | val NLL {ev['nll']:.4f} | ppl {ev['ppl']:.2f} | {ev['evaluated_tokens']} tokens")
             if cfg["checkpoint"]["save_initial"]:
-                initial_ck = _checkpoint(cfg,model,optimizer,sampler,0,0,run_id,segment,prior_elapsed,manifest,records)
-                atomic_torch_save(initial_ck, run_dir/"checkpoints/initial.pt"); atomic_torch_save(initial_ck, run_dir/"checkpoints/update_000000.pt")
+                save_latest_checkpoint(0, 0, prior_elapsed)
+                print("[ckpt] latest.pt @ step 0")
         while completed < cfg["derived"]["total_updates"]:
-            if max_wall_seconds is not None and time.monotonic()-started >= max_wall_seconds: status, reason = "paused_budget", "max_wall_seconds reached at update boundary"; print(f"[pause] wall-clock budget reached @ step {completed}; resumable checkpoint saved"); break
+            if max_wall_seconds is not None and time.monotonic()-started >= max_wall_seconds: status, reason = "paused_budget", "max_wall_seconds reached at update boundary"; print(f"[pause] wall-clock budget reached @ step {completed}; saving resumable checkpoint"); break
             update = completed + 1; active_update = update; attempted_processed = processed; optimizer.zero_grad(set_to_none=True)
             sampler_epoch_before, sampler_offset_before = sampler.epoch, sampler.offset
             ids = sampler.take(cfg["train"]["micro_batch_size"]*cfg["train"]["accumulation_steps"])
@@ -469,7 +483,9 @@ def run(cfg: dict, run_dir: Path, resume: Path | None = None, max_wall_seconds: 
             if do_eval or completed == cfg["derived"]["total_updates"]:
                 ev=evaluate(model,val,cfg["eval"]["max_target_tokens"],cfg["eval"]["batch_size"],cfg,device); writer.write("eval",completed,processed,split=cfg["data"]["validation_split"],wall_clock_elapsed_seconds=require_finite_metric("wall_clock_elapsed_seconds", prior_elapsed+time.monotonic()-started),**ev); print(f"[eval] step {completed} | val NLL {ev['nll']:.4f} | ppl {ev['ppl']:.2f} | {ev['evaluated_tokens']} tokens")
             if completed % cfg["checkpoint"]["every_updates"] == 0 or completed == cfg["derived"]["total_updates"] or (stop_at_update is not None and completed == stop_at_update):
-                ck=_checkpoint(cfg,model,optimizer,sampler,completed,processed,run_id,segment,prior_elapsed+time.monotonic()-started,manifest,records); atomic_torch_save(ck,run_dir/"checkpoints/latest.pt"); atomic_torch_save(ck,run_dir/"checkpoints"/f"update_{completed:06d}.pt"); writer.write("checkpoint",completed,processed,path="checkpoints/latest.pt",landmark_path=f"checkpoints/update_{completed:06d}.pt",wall_clock_elapsed_seconds=prior_elapsed+time.monotonic()-started); print(f"[ckpt] latest.pt @ step {completed}")
+                checkpoint_elapsed=require_finite_metric("wall_clock_elapsed_seconds", prior_elapsed+time.monotonic()-started)
+                if save_latest_checkpoint(completed, processed, checkpoint_elapsed):
+                    writer.write("checkpoint",completed,processed,path="checkpoints/latest.pt",wall_clock_elapsed_seconds=checkpoint_elapsed); print(f"[ckpt] latest.pt @ step {completed}")
             if stop_at_update is not None and completed == stop_at_update:
                 status, reason = "paused_staged", f"explicit stage gate at update {stop_at_update}"
                 print(f"[pause] staged gate reached at update {completed}; resume explicitly from checkpoints/latest.pt")
@@ -493,12 +509,11 @@ def run(cfg: dict, run_dir: Path, resume: Path | None = None, max_wall_seconds: 
     # A divergence artifact is terminal and non-resumable.  A KeyboardInterrupt
     # may have happened mid-update, so the in-memory model/optimizer and the
     # already-advanced sampler need not describe the same completed update.
-    # Only checkpoints written at a complete update boundary are resumable;
-    # keep the last such checkpoint instead of overwriting it with a partial
-    # step.
-    if status not in {"diverged_nonfinite", "interrupted"} and (completed > 0 or status == "paused_budget"):
-        ck=_checkpoint(cfg,model,optimizer,sampler,completed,processed,run_id,segment,elapsed,manifest,records); atomic_torch_save(ck,run_dir/"checkpoints/latest.pt"); atomic_torch_save(ck,run_dir/"checkpoints"/f"update_{completed:06d}.pt")
-        if status=="completed" and cfg["checkpoint"]["save_final"]: atomic_torch_save(ck,run_dir/"checkpoints/final.pt")
+    # Only a checkpoint at a complete update boundary is resumable.  A budget
+    # pause happens at a boundary, so refresh latest.pt if that boundary was
+    # not already a periodic checkpoint; duplicate writes are suppressed.
+    if status == "paused_budget" and completed > 0:
+        save_latest_checkpoint(completed, processed, elapsed)
     state = optimizer.recursive_state_summary() if hasattr(optimizer, "recursive_state_summary") else optimizer_state_summary(optimizer)
     writer.write("resource",completed,processed,optimizer_state=state,diagnostics=cfg["logging"]["diagnostics"],cuda_peak_allocated=torch.cuda.max_memory_allocated() if device.type=="cuda" else None,cuda_peak_reserved=torch.cuda.max_memory_reserved() if device.type=="cuda" else None)
     if divergence is not None:

@@ -85,9 +85,11 @@ def test_staged_resume_matches_uninterrupted_and_snapshots_are_not_rewritten(
                                 snapshot_config_path=snapshot_config, stop_at_update=2)
     assert staged["status"] == "paused_staged"
     before = {update: _snapshot_file_bytes(staged_dir, update) for update in (1, 2)}
-    checkpoint_at_two = torch.load(staged_dir / "checkpoints/update_000002.pt",
+    assert sorted(path.name for path in (staged_dir / "checkpoints").iterdir()) == ["latest.pt"]
+    checkpoint_at_two = torch.load(staged_dir / "checkpoints/latest.pt",
                                    map_location="cpu", weights_only=False)
     assert checkpoint_at_two["completed_updates"] == 2
+    assert {"model", "optimizer", "sampler", "rng"} <= set(checkpoint_at_two)
 
     resumed = train_platform.run(tiny_muon_config, staged_dir,
                                  resume=staged_dir / "checkpoints/latest.pt",
@@ -96,10 +98,12 @@ def test_staged_resume_matches_uninterrupted_and_snapshots_are_not_rewritten(
     full = train_platform.run(tiny_muon_config, full_dir, to_device="cpu",
                               snapshot_config_path=snapshot_config)
     assert full["status"] == "completed"
+    for run_dir in (staged_dir, full_dir):
+        assert sorted(path.name for path in (run_dir / "checkpoints").iterdir()) == ["latest.pt"]
 
-    _assert_checkpoints_equal(torch.load(staged_dir / "checkpoints/final.pt",
+    _assert_checkpoints_equal(torch.load(staged_dir / "checkpoints/latest.pt",
                                          map_location="cpu", weights_only=False),
-                              torch.load(full_dir / "checkpoints/final.pt",
+                              torch.load(full_dir / "checkpoints/latest.pt",
                                          map_location="cpu", weights_only=False))
     assert _train_events(staged_dir) == _train_events(full_dir)
     for update in (1, 2):
@@ -152,6 +156,7 @@ def test_keyboard_interrupt_keeps_last_complete_checkpoint_and_resume_matches(
         summary = train_platform.run(tiny_muon_config, interrupted_dir,
                                      to_device="cpu", snapshot_config_path=snapshot_config)
     assert summary["status"] == "interrupted"
+    assert sorted(path.name for path in (interrupted_dir / "checkpoints").iterdir()) == ["latest.pt"]
     latest = torch.load(interrupted_dir / "checkpoints/latest.pt",
                         map_location="cpu", weights_only=False)
     assert latest["completed_updates"] == 1
@@ -167,9 +172,9 @@ def test_keyboard_interrupt_keeps_last_complete_checkpoint_and_resume_matches(
     full = train_platform.run(tiny_muon_config, full_dir, to_device="cpu",
                               snapshot_config_path=snapshot_config)
     assert full["status"] == "completed"
-    _assert_checkpoints_equal(torch.load(interrupted_dir / "checkpoints/final.pt",
+    _assert_checkpoints_equal(torch.load(interrupted_dir / "checkpoints/latest.pt",
                                          map_location="cpu", weights_only=False),
-                              torch.load(full_dir / "checkpoints/final.pt",
+                              torch.load(full_dir / "checkpoints/latest.pt",
                                          map_location="cpu", weights_only=False))
     assert (interrupted_dir / "snapshots/update_000002.manifest.json").exists()
     assert (interrupted_dir / "snapshots/update_000003.manifest.json").exists()
@@ -193,9 +198,9 @@ def test_deleting_snapshots_does_not_change_training_resume(
     full = train_platform.run(tiny_muon_config, full_dir, to_device="cpu",
                               snapshot_config_path=snapshot_config)
     assert resumed["status"] == full["status"] == "completed"
-    _assert_checkpoints_equal(torch.load(staged_dir / "checkpoints/final.pt",
+    _assert_checkpoints_equal(torch.load(staged_dir / "checkpoints/latest.pt",
                                          map_location="cpu", weights_only=False),
-                              torch.load(full_dir / "checkpoints/final.pt",
+                              torch.load(full_dir / "checkpoints/latest.pt",
                                          map_location="cpu", weights_only=False))
     errors = (staged_dir / "snapshot_errors.jsonl").read_text()
     assert "missed_before_resume" in errors

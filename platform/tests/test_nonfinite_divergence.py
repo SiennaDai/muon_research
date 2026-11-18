@@ -68,7 +68,11 @@ def test_nonfinite_train_nll_becomes_structured_terminal_artifact(tmp_path, monk
     assert divergence["offending_field"] == "train_nll"
     assert divergence["nonfinite_value"] == kind
     assert divergence["diagnostic_checkpoint_saved"] is False
-    assert not (tmp_path / kind / "checkpoints" / "latest.pt").exists()
+    # Rolling checkpoints keep the last complete boundary (update 0); the
+    # divergent update itself is never saved.
+    latest = tmp_path / kind / "checkpoints" / "latest.pt"
+    assert latest.exists()
+    assert torch.load(latest, map_location="cpu", weights_only=False)["completed_updates"] == 0
     events = [json.loads(line) for line in (tmp_path / kind / "metrics.jsonl").read_text().splitlines()]
     assert events[-2]["event_type"] == "divergence"
     assert events[-1]["event_type"] == "lifecycle"
@@ -84,8 +88,11 @@ def test_nonfinite_validation_nll_becomes_structured_terminal_artifact(tmp_path,
     assert summary["divergence"]["offending_field"] == "validation_nll"
     assert summary["divergence"]["nonfinite_value"] == "+inf"
     assert summary["divergence"]["last_finite_train_metric"] == {"update": 1, "train_nll": 1.0}
-    # The scheduled checkpoint is not written after the non-finite evaluation.
-    assert not (tmp_path / "validation" / "checkpoints" / "latest.pt").exists()
+    # The scheduled checkpoint is not written after the non-finite evaluation;
+    # rolling latest.pt remains at the last complete boundary (update 0).
+    latest = tmp_path / "validation" / "checkpoints" / "latest.pt"
+    assert latest.exists()
+    assert torch.load(latest, map_location="cpu", weights_only=False)["completed_updates"] == 0
 
 
 def test_finite_run_still_completes_and_writes_strict_json(tmp_path, monkeypatch):
