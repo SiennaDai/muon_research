@@ -222,11 +222,22 @@ Role 顺序 `[W_before, G, M_t_candidate, D, U]`；30 个实际矩阵按 layer-m
 | 第一档 | 34,896 B/update × 8192 | 0.286 GB |
 | 第二档 | 921,600 B/node × 2144 | 1.976 GB |
 | `latest.pt` | 单文件 | 0.318 GB |
-| 日志/metadata | metrics、index、manifest | ≈0.02 GB |
-| **合计** | | **≈7.95 GB (7.40 GiB)** |
+| 日志/metadata | metrics、index、manifest | ≈0.03 GB |
+| **合计** | | **≈7.96 GB (7.41 GiB)** |
 
-双 Seed ≈ 15.9 GB。Kaggle `/kaggle/working` 约 20 GB，因此**必须在训练中段
-暂停、归档并清理**（见 Cell 4–7）。
+双 Seed ≈ **15.92 GB**。按 Kaggle `/kaggle/working` 20 GB 配额，**可以直接
+训练到 8192 并保留全部数据**，理论余量约 4.1 GB（若配额按 20 GiB 计约
+5.6 GB）。原子写入的临时文件峰值约为 Snapshot +297 MB、Checkpoint +318 MB，
+不会同时发生，仍在余量内。
+
+因此 Cell 4–7（暂停/归档/校验/恢复）是**安全网而非必需步骤**，在以下情况使用：
+
+- `df -h /kaggle/working` 剩余 **< 2.5 GB**；
+- 需要在 Kaggle 会话之间保存数据；
+- 后续扩大到 3 个 Seed 或更多 Snapshot 节点。
+
+注意：**不要同时保留归档 tar 和原数据**。tar 会把同一批数据再复制一份；
+如需归档，必须按 Cell 5 → 6 先上传校验、再 prune、最后删除 tar。
 
 ### 4.2 运行时间
 
