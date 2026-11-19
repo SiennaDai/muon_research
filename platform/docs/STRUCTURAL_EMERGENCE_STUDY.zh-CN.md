@@ -303,6 +303,7 @@ export STRUCTURAL_CONFIG="\$PLATFORM/configs/structural_emergence_8192.json"
 export ARCHIVE_DIR="\$BASE/archive"
 EOF
 
+BASE=/kaggle/working/structural_emergence
 source "$BASE/env.sh"
 cd "$PLATFORM"
 python - <<'PY'
@@ -335,6 +336,7 @@ df -h /kaggle/working
 ```bash
 %%bash
 set -euo pipefail
+BASE=/kaggle/working/structural_emergence
 source "$BASE/env.sh"
 cd "$PLATFORM"
 export CUBLAS_WORKSPACE_CONFIG=:4096:8 PYTHONUNBUFFERED=1
@@ -370,6 +372,7 @@ tail -n 5 "$BASE/logs/seed0.log" "$BASE/logs/seed1.log"
 ```bash
 %%bash
 set -euo pipefail
+BASE=/kaggle/working/structural_emergence
 source "$BASE/env.sh"
 cd "$PLATFORM"
 export CUBLAS_WORKSPACE_CONFIG=:4096:8 PYTHONUNBUFFERED=1
@@ -429,6 +432,7 @@ echo "saved $BASE/perf.json"
 ```bash
 %%bash
 set -euo pipefail
+BASE=/kaggle/working/structural_emergence
 source "$BASE/env.sh"
 for SEED in 0 1; do
   RUN_DIR="$BASE/seed$SEED"
@@ -456,6 +460,7 @@ df -h /kaggle/working | tail -1
 ```bash
 %%bash
 set -euo pipefail
+BASE=/kaggle/working/structural_emergence
 source "$BASE/env.sh"
 for SEED in 0 1; do touch "$BASE/seed$SEED/PAUSE"; done
 echo "waiting for both processes to pause..."
@@ -484,6 +489,7 @@ done
 ```bash
 %%bash
 set -euo pipefail
+BASE=/kaggle/working/structural_emergence
 source "$BASE/env.sh"
 python - <<'PY'
 import os
@@ -516,6 +522,7 @@ python scripts/archive_structural_run.py upload \
 ```bash
 %%bash
 set -euo pipefail
+BASE=/kaggle/working/structural_emergence
 source "$BASE/env.sh"
 cd "$PLATFORM"
 for SEED in 0 1; do
@@ -545,6 +552,7 @@ PY
 ```bash
 %%bash
 set -euo pipefail
+BASE=/kaggle/working/structural_emergence
 source "$BASE/env.sh"
 cd "$PLATFORM"
 export CUBLAS_WORKSPACE_CONFIG=:4096:8 PYTHONUNBUFFERED=1
@@ -572,6 +580,7 @@ sleep 30; tail -n 4 "$BASE/logs/seed0.log"
 ```bash
 %%bash
 set -euo pipefail
+BASE=/kaggle/working/structural_emergence
 source "$BASE/env.sh"
 cd "$PLATFORM"
 for SEED in 0 1; do
