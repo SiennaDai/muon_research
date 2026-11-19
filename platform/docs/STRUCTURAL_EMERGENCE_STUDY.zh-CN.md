@@ -362,6 +362,68 @@ tail -n 5 "$BASE/logs/seed0.log" "$BASE/logs/seed1.log"
 两个进程各自持有独立 Run Directory、Collector 输出、日志和 `latest.pt`；
 共享只读数据集；不使用 DDP，不改变有效 batch。
 
+### Cell 2b — Collector 性能基准（GPU，正式训练前）
+
+在正式 8192 步之前，用 8 updates 对比“仅结构 Collector”和“无 Collector”的
+真实 T4 开销，并记录显存。结果写入 `perf.json`，完成后可删除临时目录。
+
+```bash
+%%bash
+set -euo pipefail
+source "$BASE/env.sh"
+cd "$PLATFORM"
+export CUBLAS_WORKSPACE_CONFIG=:4096:8 PYTHONUNBUFFERED=1
+PERF="$BASE/perf"; rm -rf "$PERF"; mkdir -p "$PERF"
+
+cat > "$PERF/structural_only.json" <<EOF
+{"schema_version":1,"enabled":true,
+ "scalar_stats":{"enabled":true,"chunk_updates":128},
+ "head_stats":{"enabled":true,"chunk_updates":128},
+ "role_relations":{"enabled":true,"chunk_updates":128},
+ "row_col_norms":{"enabled":true,"warmup_updates":128,"every_updates":4,"chunk_nodes":32},
+ "min_free_bytes":0,"max_total_bytes":null}
+EOF
+cat > "$PERF/snapshots_off.json" <<EOF
+{"schema_version":1,"enabled":false,"updates":[],"on_error":"disable","max_total_bytes":null,"min_free_bytes":0}
+EOF
+
+CUDA_VISIBLE_DEVICES=0 python src/main.py \
+  --recipe "$PLATFORM/recipes/structural_emergence_30m_fp32_muon_s0.json" \
+  --data-root "$DATA_ROOT" --run-dir "$PERF/with" --to-device cuda:0 \
+  --stop-at-update 8 --snapshot-config "$PERF/snapshots_off.json" \
+  --structural-config "$PERF/structural_only.json" > "$PERF/with.log" 2>&1
+
+CUDA_VISIBLE_DEVICES=0 python src/main.py \
+  --recipe "$PLATFORM/recipes/structural_emergence_30m_fp32_muon_s0.json" \
+  --data-root "$DATA_ROOT" --run-dir "$PERF/without" --to-device cuda:0 \
+  --stop-at-update 8 > "$PERF/without.log" 2>&1
+
+python - "$PERF" <<'PY'
+import json, sys
+from pathlib import Path
+perf = Path(sys.argv[1])
+with_run = json.loads((perf / "with/summary.json").read_text())
+without_run = json.loads((perf / "without/summary.json").read_text())
+ratio = with_run["mean_update_seconds"] / without_run["mean_update_seconds"]
+report = {
+    "with_structural_mean_update_seconds": with_run["mean_update_seconds"],
+    "without_collector_mean_update_seconds": without_run["mean_update_seconds"],
+    "overhead_ratio": ratio,
+    "with_cuda_peak_allocated_bytes": with_run["cuda_peak_allocated_bytes"],
+    "without_cuda_peak_allocated_bytes": without_run["cuda_peak_allocated_bytes"],
+    "completed_updates_each": 8,
+}
+(perf / "perf.json").write_text(json.dumps(report, indent=2) + "\n")
+print(json.dumps(report, indent=2))
+PY
+cp "$PERF/perf.json" "$BASE/perf.json"
+rm -rf "$PERF"
+echo "saved $BASE/perf.json"
+```
+
+判定：若 `overhead_ratio > 1.20`，在正式训练前暂停并报告；1.05–1.20 可接受。
+`cuda_peak_allocated_bytes` 的差值即 Collector 的显存开销（预期 < 20 MB）。
+
 ### Cell 3 — 状态监控（可反复执行）
 
 ```bash
