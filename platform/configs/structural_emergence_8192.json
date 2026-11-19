@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "enabled": true,
+  "scalar_stats": {
+    "enabled": true,
+    "chunk_updates": 128
+  },
+  "head_stats": {
+    "enabled": true,
+    "chunk_updates": 128
+  },
+  "role_relations": {
+    "enabled": true,
+    "chunk_updates": 128
+  },
+  "row_col_norms": {
+    "enabled": true,
+    "warmup_updates": 128,
+    "every_updates": 4,
+    "chunk_nodes": 32
+  },
+  "min_free_bytes": 1073741824,
+  "max_total_bytes": 4294967296
+}

@@ -414,7 +414,10 @@ class MuonSnapshotCollector:
         It never fabricates a snapshot and never changes training state.
         """
         completed_updates = int(completed_updates)
+        archived = self._archived_updates()
         for update in sorted(self._config_updates):
+            if update in archived:
+                continue
             if update <= completed_updates and update not in self._committed and update not in self._conflicted:
                 self._missed[update] = "landmark at or before resumed completed_updates"
                 self._log_error(
@@ -423,6 +426,17 @@ class MuonSnapshotCollector:
                     phase="scan",
                     message=f"landmark update {update} <= completed_updates {completed_updates} has no committed snapshot",
                 )
+
+    def _archived_updates(self) -> set[int]:
+        """Landmarks whose snapshot files were archived and pruned locally."""
+        path = self.snapshots_dir / "archived.json"
+        if not path.is_file():
+            return set()
+        try:
+            payload = json.loads(path.read_text())
+            return {int(value) for value in payload.get("updates", [])}
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            return set()
 
     def begin_update(self, context: SnapshotBeginContext) -> None:
         if self._closed or self._disabled:
@@ -618,6 +632,7 @@ class MuonSnapshotCollector:
             "config_hash": self.config.config_hash,
             "enabled": bool(self.config.enabled),
             "committed_updates": list(self.committed_updates()),
+            "archived_updates": sorted(self._archived_updates()),
             "conflicted_updates": list(self.conflicted_updates()),
             "missed_updates": list(self.missed_updates()),
             "disabled": bool(self._disabled),

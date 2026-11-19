@@ -1,0 +1,69 @@
+{
+  "all_checks_pass": true,
+  "checks": [
+    {
+      "finite": 3840,
+      "max_abs_error": 1.750475352224612e-06,
+      "max_relative_error": 5.050314136768542e-05,
+      "name": "scalar_stats"
+    },
+    {
+      "finite": 1152,
+      "max_abs_error": 2.4052613198932704e-06,
+      "max_relative_error": 1.8031635815521157e-07,
+      "name": "head_energy"
+    },
+    {
+      "finite": 2400,
+      "max_abs_error": 2.0064796416363606e-05,
+      "max_relative_error": 0.001387028049592643,
+      "name": "role_relations"
+    },
+    {
+      "finite": 119040,
+      "max_abs_error": 9.231047215507715e-08,
+      "max_relative_error": 1.41614625410175e-07,
+      "name": "row_norms"
+    },
+    {
+      "finite": 76800,
+      "max_abs_error": 9.279074975054868e-08,
+      "max_relative_error": 1.5649360337703595e-07,
+      "name": "col_norms"
+    },
+    {
+      "finite": 34560,
+      "max_abs_error": 8.728250966427709e-08,
+      "max_relative_error": 1.8433196448872082e-07,
+      "name": "qkv_col_norms"
+    }
+  ],
+  "max_relative_error": 0.001387028049592643,
+  "metadata_identity": {
+    "collector_version": 1,
+    "data_fingerprint": "ba3ac442ab488991beaa93a65652a52fbe56899509fa46e5edfc288b86173489",
+    "recipe_fingerprint": "d28b230454b53fdffa0a4dfa45672e823f326d0cb40f8260708b857c51e5a285",
+    "run_id": "se_smoke_collect2",
+    "structural_config_hash": "ae63309feb6396e476d9deeced2bcc8a3ac7e9bc63e521e478fdeacea7ed3e2e"
+  },
+  "pass_criterion": "max_abs_error < 1e-4 or max_relative_error < 2e-4",
+  "run_dir": "/tmp/se_smoke_collect2",
+  "snapshot_update": 2,
+  "tiers": {
+    "expected_row_col_nodes": 2144,
+    "head_matrices": 24,
+    "row_col_nodes": 2,
+    "scalar_stats_updates": [
+      1,
+      2
+    ],
+    "views": 48
+  },
+  "timing_cpu": {
+    "collector_completed_updates": 2,
+    "collector_mean_update_seconds": 27.91645726850038,
+    "plain_completed_updates": 2,
+    "plain_mean_update_seconds": 16.767138219001936,
+    "ratio": 1.6649506256746363
+  }
+}

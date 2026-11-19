@@ -27,6 +27,10 @@ from optim.muon_snapshot_collector import (
     MuonSnapshotCollector, SnapshotBeginContext, SnapshotRunContext,
     resolve_snapshot_config,
 )
+from optim.muon_structural_collector import (
+    MuonStructuralCollector, StructuralBeginContext, StructuralPauseRequest,
+    StructuralRunContext, resolve_structural_config,
+)
 
 
 class NonFiniteMetricError(RuntimeError):
@@ -170,14 +174,16 @@ def _checkpoint(cfg, model, optimizer, sampler, completed, processed, run_id, se
         "rng": rng_state(torch.cuda.is_available()), "elapsed_seconds": elapsed, "run_id": run_id, "next_segment_id": segment+1}
 
 
-def run(cfg: dict, run_dir: Path, resume: Path | None = None, max_wall_seconds: float | None = None, to_device: str = "auto", stop_at_update: int | None = None, snapshot_config_path: str | Path | None = None):
+def run(cfg: dict, run_dir: Path, resume: Path | None = None, max_wall_seconds: float | None = None, to_device: str = "auto", stop_at_update: int | None = None, snapshot_config_path: str | Path | None = None, structural_config_path: str | Path | None = None):
     root = Path(__file__).resolve().parents[1]
     run_dir = run_dir.resolve()
-    # Validate the sidecar before creating any run artifacts.  New runs default
+    # Validate the sidecars before creating any run artifacts.  New runs default
     # to disabled; resumes inherit the stored configuration.
     snapshot_config = resolve_snapshot_config(
         snapshot_config_path, run_dir=run_dir,
         total_updates=cfg["derived"]["total_updates"], resume=resume is not None)
+    structural_config = resolve_structural_config(
+        structural_config_path, run_dir=run_dir, resume=resume is not None)
     run_dir.mkdir(parents=True, exist_ok=True)
     source_info = source_snapshot(root)
     environment_info = environment_snapshot()
@@ -265,10 +271,13 @@ def run(cfg: dict, run_dir: Path, resume: Path | None = None, max_wall_seconds: 
                 "weighting": "A_next=mu*A+mu*e without correction; A_next=mu*e after correction"}
         grouping = {"muon_parameters": sum(r["numel"] for r in records if r["group"] == "muon"), "auxiliary_adamw_parameters": sum(r["numel"] for r in records if r["group"] == "auxiliary_adamw"), "muon_tensor_count": sum(r["group"] == "muon" for r in records), "auxiliary_adamw_tensor_count": sum(r["group"] == "auxiliary_adamw" for r in records)}
         dump_resolved(cfg, run_dir/"resolved_config.json"); write_json(run_dir/"environment.json", environment_info); write_json(run_dir/"source.json", source_info); write_json(run_dir/"data_manifest.json", {k:v for k,v in manifest.items() if k != "_path"}); write_json(run_dir/"parameters.json", records); write_json(run_dir/"precision.json", {**cfg["precision"], "to_device": to_device, "device": str(device), "optimizer_state_simulation": cfg["optimizer"]["state_simulation"], "state_persistence": state_policy, "roundtrip_state_policy": state_policy["persistence_timing"], "parameter_grouping": grouping, "state_diagnostics": {"enabled": bool(cfg["logging"].get("state_diagnostics", False)), "stream": "state_diagnostics.jsonl", "timing": "detached read-only observation after FP32 moment/current update and after persistence simulation", "percentile_method": "bounded deterministic per-tensor evenly-spaced samples; exact counts/extrema/L2 reductions"}})
+    seeds = {key: cfg["experiment"][key] for key in ("seed", "data_seed", "algorithm_seed")}
     snapshot_collector = None
-    if snapshot_config.enabled or ((run_dir / "snapshots").exists() and muon_parameter_order):
-        if snapshot_config.enabled and not hasattr(optimizer, "set_snapshot_observer"):
-            raise ValueError("snapshot collection requires a ReferenceMuon optimizer")
+    structural_collector = None
+    if (snapshot_config.enabled or structural_config.enabled
+            or ((run_dir / "snapshots").exists() and muon_parameter_order)):
+        if (snapshot_config.enabled or structural_config.enabled) and not hasattr(optimizer, "set_snapshot_observer"):
+            raise ValueError("research collection requires a ReferenceMuon optimizer")
         snapshot_context = SnapshotRunContext(
             run_id=run_id, segment_id=segment,
             recipe_fingerprint=cfg["fingerprint"], data_fingerprint=manifest["fingerprint"],
@@ -278,15 +287,42 @@ def run(cfg: dict, run_dir: Path, resume: Path | None = None, max_wall_seconds: 
             optimizer_param_index=optimizer_param_index,
             optimizer_metadata=optimizer_metadata,
             train_config=cfg["train"], data_config=cfg["data"],
-            seeds={key: cfg["experiment"][key] for key in ("seed", "data_seed", "algorithm_seed")},
-            source=source_info, environment=environment_info,
+            seeds=seeds, source=source_info, environment=environment_info,
             device=str(device), precision=cfg["precision"],
         )
         snapshot_collector = MuonSnapshotCollector(
             run_dir=run_dir, config=snapshot_config, context=snapshot_context)
         snapshot_collector.scan_existing(completed_updates=completed)
-        if snapshot_config.enabled:
-            optimizer.set_snapshot_observer(snapshot_collector.observe, name_by_id)
+    if structural_config.enabled:
+        if cfg["optimizer"]["name"] != "reference_muon":
+            raise ValueError("structural collection requires optimizer.name == 'reference_muon'")
+        if cfg["optimizer"].get("state_simulation", "none") != "none":
+            raise ValueError("structural collection requires optimizer.state_simulation == 'none'")
+        if not muon_parameter_order:
+            raise ValueError("structural collection requires a non-empty Muon group")
+        structural_context = StructuralRunContext(
+            run_id=run_id, segment_id=segment,
+            recipe_fingerprint=cfg["fingerprint"], data_fingerprint=manifest["fingerprint"],
+            config_hash=structural_config.config_hash,
+            total_updates=cfg["derived"]["total_updates"],
+            model_config=cfg["model"], parameter_records=records,
+            muon_parameter_order=muon_parameter_order,
+            optimizer_param_index=optimizer_param_index,
+            optimizer_metadata=optimizer_metadata,
+            train_config=cfg["train"], data_config=cfg["data"],
+            seeds=seeds, source=source_info, environment=environment_info,
+            device=str(device), precision=cfg["precision"],
+        )
+        structural_collector = MuonStructuralCollector(
+            run_dir=run_dir, config=structural_config,
+            context=structural_context, completed_updates=completed)
+    if snapshot_config.enabled or structural_config.enabled:
+        def _research_observer(**kwargs):
+            if snapshot_collector is not None:
+                snapshot_collector.observe(**kwargs)
+            if structural_collector is not None:
+                structural_collector.observe(**kwargs)
+        optimizer.set_snapshot_observer(_research_observer, name_by_id)
     writer = EventWriter(run_dir/"metrics.jsonl", run_id, segment)
     state_diagnostics_enabled = bool(cfg["logging"].get("state_diagnostics", False))
     state_writer = None
@@ -397,7 +433,15 @@ def run(cfg: dict, run_dir: Path, resume: Path | None = None, max_wall_seconds: 
                 print("[ckpt] latest.pt @ step 0")
         while completed < cfg["derived"]["total_updates"]:
             if max_wall_seconds is not None and time.monotonic()-started >= max_wall_seconds: status, reason = "paused_budget", "max_wall_seconds reached at update boundary"; print(f"[pause] wall-clock budget reached @ step {completed}; saving resumable checkpoint"); break
+            if (run_dir / "PAUSE").exists(): status, reason = "paused_manual", "pause file present at update boundary"; print(f"[pause] manual pause requested @ step {completed}; saving resumable checkpoint"); break
             update = completed + 1; active_update = update; attempted_processed = processed; optimizer.zero_grad(set_to_none=True)
+            if structural_collector is not None:
+                try:
+                    structural_collector.precheck(update)
+                except StructuralPauseRequest as exc:
+                    status, reason = "paused_disk", str(exc)
+                    print(f"[pause] {exc}; saving resumable checkpoint")
+                    break
             sampler_epoch_before, sampler_offset_before = sampler.epoch, sampler.offset
             ids = sampler.take(cfg["train"]["micro_batch_size"]*cfg["train"]["accumulation_steps"])
             sampler_epoch_after, sampler_offset_after = sampler.epoch, sampler.offset
@@ -418,6 +462,19 @@ def run(cfg: dict, run_dir: Path, resume: Path | None = None, max_wall_seconds: 
             grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), cfg["train"]["grad_clip_norm"]); grad_norm_value = require_finite_metric("pre_clip_grad_norm", grad_norm); clipped = grad_norm_value > cfg["train"]["grad_clip_norm"]
             lr = require_finite_metric("learning_rate", learning_rate(update,cfg["derived"]["schedule_total_updates"],cfg["optimizer"]["lr"],cfg["schedule"]["warmup_updates"],cfg["schedule"]["final_lr_ratio"],cfg["schedule"]["name"]))
             for group in optimizer.param_groups: group["lr"] = lr
+            if structural_collector is not None and structural_collector.should_collect(update):
+                structural_collector.begin_update(StructuralBeginContext(
+                    update=update, segment_id=segment,
+                    tokens_this_update=n_tokens,
+                    processed_target_tokens=processed + n_tokens,
+                    learning_rate=lr,
+                    weight_decay=cfg["optimizer"]["weight_decay"],
+                    muon_momentum=cfg["optimizer"].get("muon_momentum", 0.95),
+                    muon_nesterov=bool(cfg["optimizer"].get("muon_nesterov", True)),
+                    muon_update_scale=lr,
+                    pre_clip_grad_norm=grad_norm_value, clipped=clipped,
+                    grad_clip_norm=cfg["train"]["grad_clip_norm"],
+                ))
             if snapshot_collector is not None and snapshot_collector.should_collect(update):
                 snapshot_collector.begin_update(SnapshotBeginContext(
                     update=update, segment_id=segment,
@@ -444,6 +501,8 @@ def run(cfg: dict, run_dir: Path, resume: Path | None = None, max_wall_seconds: 
             train_nll = require_finite_metric("train_nll", nll_sum/n_tokens)
             if snapshot_collector is not None:
                 snapshot_collector.finish_update(update=update, train_nll=train_nll)
+            if structural_collector is not None:
+                structural_collector.finish_update(update=update, train_nll=train_nll)
             if collector is not None:
                 diagnostic = collector.finish_update(update=update, processed_target_tokens=processed+n_tokens,
                     train_nll=train_nll, pre_clip_grad_norm=grad_norm_value, learning_rate=lr)
@@ -505,6 +564,8 @@ def run(cfg: dict, run_dir: Path, resume: Path | None = None, max_wall_seconds: 
     finally:
         if snapshot_collector is not None:
             snapshot_collector.close()
+        if structural_collector is not None:
+            structural_collector.close(completed_updates=completed)
     elapsed=prior_elapsed+time.monotonic()-started
     # A divergence artifact is terminal and non-resumable.  A KeyboardInterrupt
     # may have happened mid-update, so the in-memory model/optimizer and the
@@ -512,7 +573,7 @@ def run(cfg: dict, run_dir: Path, resume: Path | None = None, max_wall_seconds: 
     # Only a checkpoint at a complete update boundary is resumable.  A budget
     # pause happens at a boundary, so refresh latest.pt if that boundary was
     # not already a periodic checkpoint; duplicate writes are suppressed.
-    if status == "paused_budget" and completed > 0:
+    if status in {"paused_budget", "paused_disk", "paused_manual"} and completed > 0:
         save_latest_checkpoint(completed, processed, elapsed)
     state = optimizer.recursive_state_summary() if hasattr(optimizer, "recursive_state_summary") else optimizer_state_summary(optimizer)
     writer.write("resource",completed,processed,optimizer_state=state,diagnostics=cfg["logging"]["diagnostics"],cuda_peak_allocated=torch.cuda.max_memory_allocated() if device.type=="cuda" else None,cuda_peak_reserved=torch.cuda.max_memory_reserved() if device.type=="cuda" else None)
