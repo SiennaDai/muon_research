@@ -376,6 +376,10 @@ tail -n 5 "$BASE/logs/seed0.log" "$BASE/logs/seed1.log"
 两个进程各自持有独立 Run Directory、Collector 输出、日志和 `latest.pt`；
 共享只读数据集；不使用 DDP，不改变有效 batch。
 
+> **重要**：本 cell 启动后立即返回。commit（Save & Run All）模式必须在它之后
+> 执行 Cell 2c 阻塞等待，否则 notebook 结束时内核关闭、两个训练进程会被杀掉。
+> 交互模式则必须保持会话不关闭。
+
 ### Cell 2b — Collector 性能基准（GPU，正式训练前）
 
 在正式 8192 步之前，用 8 updates 对比“仅结构 Collector”和“无 Collector”的
@@ -444,6 +448,40 @@ echo "saved $BASE/perf.json"
 同形状矩阵批量归约优化（当前实现每个 update 约 7000 个小 kernel，Python
 dispatch 是主要成本）；否则按当前实现采集，保证统计口径与已验收的
 Smoke Test 一致。
+
+### Cell 2c — 阻塞等待（commit 模式必须）
+
+Cell 2 用 `nohup ... &` 启动后台训练后立刻返回。在 "Save & Run All" 模式下，
+notebook 执行完最后一个 cell 就会关闭内核，容器停止，后台进程被一起杀掉
+（`nohup` 只忽略 SIGHUP，无法阻止会话销毁）。因此 **commit 模式必须在训练
+cell 之后放一个阻塞等待 cell**；交互模式则必须保持浏览器会话不关闭。
+
+```bash
+%%bash
+set -euo pipefail
+BASE=/kaggle/working/structural_emergence
+echo "waiting for both training processes..."
+while true; do
+  alive=0
+  for SEED in 0 1; do
+    PID=$(cat "$BASE/logs/seed$SEED.pid" 2>/dev/null || true)
+    if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then alive=$((alive+1)); fi
+  done
+  [ "$alive" -eq 0 ] && break
+  sleep 120
+done
+for SEED in 0 1; do
+  python - "$BASE/seed$SEED/summary.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+print(sys.argv[1], d["status"], d["completed_updates"])
+assert d["status"] in {"completed", "paused_manual", "paused_disk"}, d["status"]
+PY
+done
+```
+
+若训练因磁盘预算进入 `paused_disk`，本 cell 会正常返回并打印 `paused_disk`，
+此时按 Cell 4–7 归档/清理后在新会话恢复。
 
 ### Cell 3 — 状态监控（可反复执行）
 
