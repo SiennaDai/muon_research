@@ -680,6 +680,49 @@ python scripts/smoke_structural_collectors.py \
 
 ---
 
+## 5.5 训练结束后如何取数据
+
+Cell 2c 阻塞到训练结束、commit 正常收尾时，Kaggle 会把 `/kaggle/working`
+（上限 20 GB）保存为该 notebook 版本的 **Output**。这里是完整的 15.9 GB 数据，
+不需要额外复制，也不会因为会话关闭而丢失。
+
+### 方式 A：直接下载 notebook 输出（最省事，推荐作为完整副本）
+
+在本机（已配置好 `kaggle` CLI 和 token）：
+
+```bash
+kaggle kernels output <OWNER>/<NOTEBOOK_SLUG> -p ./structural_emergence_output
+```
+
+这会把该版本 Output 里的全部文件拉到本地；网页端也可以在版本页的
+**Output** 标签里逐个浏览/下载。注意：
+
+- Output 是 **commit 结束那一刻**的 `/kaggle/working` 快照；如果之前执行过
+  prune，被删掉的文件不会出现在 Output 里。
+- 15.9 GB 的下载时间取决于 Kaggle 出站带宽，建议用 CLI 而不是网页。
+
+### 方式 B：GitHub Release 长期归档（论文/长期保存用）
+
+按 Cell 5 → 6 的 `archive → upload → prune` 流程。**注意磁盘重复**：完整
+归档 15.9 GB 数据时，tar 分片会再占约 15.9 GB，超过 20 GB 工作盘。因此必须
+分段执行，每段上传校验后立即 prune，再进入下一段，例如：
+
+1. `--through-update 4096` → upload → verify → prune（释放约 8 GB）；
+2. 不带 `--through-update`（或 `--since-update 4097`）归档剩余部分 → upload →
+   verify → prune。
+
+每段完成后再删除该段的 `.tar`，确保任意时刻“本地数据 + 未删除 tar”不超过
+20 GB。
+
+### 选择建议
+
+- 想尽快拿到完整数据：**方式 A**。commit 成功后 `kaggle kernels output` 一次
+  拿全，最不容易出错。
+- 想长期保存、可被其他机器/仓库引用：**方式 B**。两者可以同时做：先方式 A
+  拿到完整副本，再在本地或新会话里做归档上传。
+
+---
+
 ## 6. 实现说明与边界
 
 - 优化器数值路径未改动；Collector 只在 `ReferenceMuon.step` 的既有只读
