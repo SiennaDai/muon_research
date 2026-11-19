@@ -382,8 +382,9 @@ tail -n 5 "$BASE/logs/seed0.log" "$BASE/logs/seed1.log"
 
 ### Cell 2b — Collector 性能基准（GPU，正式训练前）
 
-在正式 8192 步之前，用 8 updates 对比“仅结构 Collector”和“无 Collector”的
-真实 T4 开销，并记录显存。结果写入 `perf.json`，完成后可删除临时目录。
+**必须在 Cell 2 启动正式训练之前执行**（它占用 GPU 0 跑两组 8-update 短任务；
+与正式训练同时执行会互相抢占 GPU）。用 8 updates 对比“仅结构 Collector”和
+“无 Collector”的真实 T4 开销，并记录显存。结果写入 `perf.json`，完成后可删除临时目录。
 
 ```bash
 %%bash
