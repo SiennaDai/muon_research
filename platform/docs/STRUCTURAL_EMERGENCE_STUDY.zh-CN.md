@@ -233,8 +233,8 @@ Role 顺序 `[W_before, G, M_t_candidate, D, U]`；30 个实际矩阵按 layer-m
 Exploratory 4096-update 运行实测约 1.2 s/update（含低频 eval 和 9 个
 Snapshot）。本轮 8192 updates、每步 Collector，T4 实测 **1.204 s/update**
 （Cell 2b，2026-11-19），单 Seed **约 2.8 小时**；双卡并行总墙钟约
-**3 小时**，低于 Kaggle
-12 小时上限。真实开销以 Cell 2 首次 32 updates 的实测为准（见 4.3）。
+**3 小时**，低于 Kaggle 12 小时上限。GPU 开销由 Cell 2b 在正式训练前实测
+（2026-11-19 结果：1.204 s/update，1.93×，显存 +0.88 MiB）。
 
 ### 4.3 本地 CPU Smoke Test（2026-11-19）
 
