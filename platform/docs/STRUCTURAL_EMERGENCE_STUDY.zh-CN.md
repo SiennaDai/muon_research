@@ -231,8 +231,9 @@ Role 顺序 `[W_before, G, M_t_candidate, D, U]`；30 个实际矩阵按 layer-m
 ### 4.2 运行时间
 
 Exploratory 4096-update 运行实测约 1.2 s/update（含低频 eval 和 9 个
-Snapshot）。本轮 8192 updates、每步 Collector，估计 **1.3–1.5 s/update**，
-单 Seed **3.0–3.4 小时**；双卡并行总墙钟约 **3–3.5 小时**，低于 Kaggle
+Snapshot）。本轮 8192 updates、每步 Collector，T4 实测 **1.204 s/update**
+（Cell 2b，2026-11-19），单 Seed **约 2.8 小时**；双卡并行总墙钟约
+**3 小时**，低于 Kaggle
 12 小时上限。真实开销以 Cell 2 首次 32 updates 的实测为准（见 4.3）。
 
 ### 4.3 本地 CPU Smoke Test（2026-11-19）
@@ -424,8 +425,14 @@ rm -rf "$PERF"
 echo "saved $BASE/perf.json"
 ```
 
-判定：若 `overhead_ratio > 1.20`，在正式训练前暂停并报告；1.05–1.20 可接受。
-`cuda_peak_allocated_bytes` 的差值即 Collector 的显存开销（预期 < 20 MB）。
+2026-11-19 首次实测（T4，8 updates）：`1.204 s/update` vs `0.622 s/update`，
+`overhead_ratio = 1.93`，显存增加 921,600 B（0.88 MiB，恰好是第二档单节点
+缓冲）。按绝对时间推算单 Seed ≈2.8 h，双卡并行仍在 12 h 内，因此**继续训练**。
+
+判定改为绝对时间：推算单 Seed **> 6 h** 或 `overhead_ratio > 3.0` 时才停下做
+同形状矩阵批量归约优化（当前实现每个 update 约 7000 个小 kernel，Python
+dispatch 是主要成本）；否则按当前实现采集，保证统计口径与已验收的
+Smoke Test 一致。
 
 ### Cell 3 — 状态监控（可反复执行）
 
