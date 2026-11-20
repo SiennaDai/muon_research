@@ -19,17 +19,31 @@
 import os, sys, json, time, math, shutil
 from pathlib import Path
 
-CKPT_DATASET = Path("/kaggle/input/fp32-muon-ckpt-1536")
+INPUT = Path("/kaggle/input")
+
+# Kaggle 新挂载布局是 /kaggle/input/datasets/<owner>/<slug>；
+# 旧布局是 /kaggle/input/<slug>。两种都探测。
+CKPT_CANDIDATES = [
+    Path("/kaggle/input/datasets/siennadai/fp32-muon-ckpt-1536"),
+    Path("/kaggle/input/fp32-muon-ckpt-1536"),
+    *sorted(p for p in INPUT.rglob("fp32-muon-ckpt-1536") if p.is_dir()),
+]
+CKPT_DATASET = next(
+    p for p in CKPT_CANDIDATES
+    if (p / "structural_concentration_ckpt/seed0/node_checkpoints/pre_u000784.pt").is_file()
+)
 REPO = CKPT_DATASET / "muon_research"
 RUN = CKPT_DATASET / "structural_concentration_ckpt/seed0"
 NODE = RUN / "node_checkpoints"
-DATA = Path("/kaggle/input/lowp-benchmark-slimpajama-8x-v1/slimpajama_8x")
+DATA = next(p.parent for p in INPUT.rglob("slimpajama_8x/manifest.json"))
 
 for p in (REPO / "platform/src", NODE / "pre_u000784.pt",
           NODE / "pre_u000784.json", NODE / "pre_u000784_roles.pt",
           DATA / "manifest.json"):
     print(p, p.exists())
+assert (REPO / "platform/src/main.py").is_file()
 assert (NODE / "pre_u000784_roles.pt").exists()
+assert (DATA / "manifest.json").is_file()
 
 os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
 sys.path.insert(0, str(REPO / "platform/src"))
