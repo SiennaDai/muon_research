@@ -14,7 +14,7 @@
 |---|---|
 | 仓库 | `https://github.com/SiennaDai/muon_research` |
 | 原运行 commit | `72beef8c63eb131f38a5ae7a5ca89bfb51eef593` |
-| 本轮 commit | 执行前填写 `<FIXED_COMMIT_SHA>` |
+| 本轮 commit | 执行前填写 `8c035972d66986df4d59ddcc18e6238f53410339` |
 | Recipes | `platform/recipes/structural_emergence_30m_fp32_muon_s0/s1.json` |
 | Dataset | `siennadai/lowp-benchmark-slimpajama-8x-v1` |
 | Dataset fingerprint | `ba3ac442ab488991beaa93a65652a52fbe56899509fa46e5edfc288b86173489` |
@@ -84,7 +84,7 @@ BASE=/kaggle/working/structural_concentration_ckpt
 REPO=/kaggle/working/muon_research
 mkdir -p "$BASE"/logs /kaggle/working/muon_data/data
 [ -d "$REPO/.git" ] || git clone https://github.com/SiennaDai/muon_research "$REPO"
-TARGET_COMMIT="<FIXED_COMMIT_SHA>"
+TARGET_COMMIT="8c035972d66986df4d59ddcc18e6238f53410339"
 git -C "$REPO" fetch --all --tags
 git -C "$REPO" checkout --detach "$TARGET_COMMIT"
 test "$(git -C "$REPO" rev-parse HEAD)" = "$TARGET_COMMIT"
