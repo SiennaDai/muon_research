@@ -262,13 +262,23 @@ def run_nodes(args) -> None:
                 torch.manual_seed(2026 + node * 100 + layer)
                 include_vo = layer in VO_LAYERS
                 specs = head_specs(layer, include_vo)
-                # L_probe cross terms: one HVP per block gives the full row/column.
-                probe_hv = {}
-                for spec in specs:
-                    probe_hv[id(spec)] = engine.hvp_block(
-                        probe_loss, spec, block(dw[spec["name"]], spec))
-                q_diag = {id(s): float((block(dw[s["name"]], s)
-                                        * probe_hv[id(s)]).sum()) for s in specs}
+                # L_probe cross terms.  For a source block k, H(ΔW_k) is a
+                # full-model vector; the cross term with h needs the h block
+                # of that vector, which may live in a different parameter
+                # (e.g. Q row block vs O column block).  Flattened dot
+                # products also avoid row/column broadcasting mistakes.
+                probe_cross = {}
+                for k_spec in specs:
+                    value_k = block(dw[k_spec["name"]], k_spec)
+                    hv = engine.hvp(probe_loss,
+                                    engine.vector(k_spec, value_k))
+                    for h_spec in specs:
+                        parameter = model.get_parameter(h_spec["name"])
+                        a = block(dw[h_spec["name"]], h_spec).reshape(-1)
+                        b = block(hv[id(parameter)], h_spec).reshape(-1)
+                        probe_cross[(id(h_spec), id(k_spec))] = float((a * b).sum())
+                    del hv
+                q_diag = {id(s): probe_cross[(id(s), id(s))] for s in specs}
                 for h_spec in specs:
                     q_h = q_diag[id(h_spec)]
                     dw_norm = float(block(dw[h_spec["name"]], h_spec).norm())
@@ -280,8 +290,7 @@ def run_nodes(args) -> None:
                         "dw_norm": dw_norm, "coef": coef, "total_norm": total_norm})
                     for k_spec in specs:
                         q_k = q_diag[id(k_spec)]
-                        q_hk = float((block(dw[h_spec["name"]], h_spec)
-                                      * probe_hv[id(k_spec)]).sum())
+                        q_hk = probe_cross[(id(h_spec), id(k_spec))]
                         denom = math.sqrt(abs(q_h * q_k)) if q_h != 0 and q_k != 0 else 0.0
                         cross_rows.append({
                             "seed": seed, "node": node, "layer": layer,
