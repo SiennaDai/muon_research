@@ -12,7 +12,7 @@
 | 项目 | 固定值 |
 |---|---|
 | 仓库 | `https://github.com/SiennaDai/muon_research` |
-| 本 runbook 的代码 commit | `99030ac72aa96ba4d27a96a37a537382f9dea0eb` |
+| 本 runbook 的代码 commit | `09492212ecc58af85b9ce64d0226a6d49c777663` |
 | 分析脚本 | `analysis/structural_emergence/se_stage5_hessian.py` |
 | Checkpoint 数据集 | `siennadai/fp32-muon-ckpt-1536` |
 | Checkpoint 根目录 | `.../structural_concentration_ckpt` |
@@ -43,21 +43,25 @@
 > HVP 后释放。因此正式峰值应在 7–8 GiB 量级。若仍看到 >13 GiB,不要继续跑完整节点集,
 > 先把 `run.log` 的节点/层位置贴回来。
 
-### 1.1 预检已通过（2026-11-21）
+### 1.1 预检状态与必须重跑的原因（2026-11-21）
 
-在 commit `99030ac` 上，seed0 / node 784 / Layer 2 的交互式预检已通过：
+在 commit `99030ac` 上，seed0 / node 784 / Layer 2（仅 Q/K）的预检通过：
 
 | 参数 | `delta_w_rel_error` | `g_rel_error` |
 |---|---:|---:|
 | `transformer.h.0.attn.c_attn.weight` | `2.5508e-5` | `4.038e-7` |
 | `transformer.h.0.attn.c_proj.weight` | `5.900e-6` | `3.948e-7` |
 
-- `direction_curvature.csv` 行数：24（12 blocks × probe/train）；
-- HVP、Role 对比、CSV flush 全部正常；
-- 误差远低于 `1e-4` 验收线。
+但该预检没有覆盖 V/O，正式 run 在第一个含 V/O 的层暴露了交叉项实现错误：
 
-因此正式提交时 **Cell 2 可以跳过**。若担心 commit/数据集环境变化，保留 Cell 2 作为
-1–2 分钟守卫也可以；它只写 `/kaggle/working/stage5_hessian_preflight`，不影响正式输出。
+- 原实现只保留了源 block 的 HVP 分量，而 `ΔW_hᵀHΔW_k` 需要 `HΔW_k` 在 **h 参数块**上的分量；
+- Q 行块与 O 列块直接逐元素相乘也会出现 `(64,384)` vs `(384,64)` 的形状错误。
+
+commit `0949221` 已改成：每个源 block 做一次**完整模型 HVP**，再对所有目标 block 取对应参数块、flatten 后点积。因此：
+
+- 旧 pilot 的 `q_hk` 数值不可信；正式结果必须来自新 commit；
+- **Cell 2 必须重跑**，并且这次用 `--layers 3` 覆盖 Q/K/V/O；
+- V/O 预检通过后才进入 Cell 3 的正式 run。
 
 ## 2. 本轮计算什么
 
@@ -84,7 +88,8 @@ q_hk  = ΔW_hᵀ H_probe ΔW_k
 ρ_hk  = q_hk / sqrt(|q_h q_k|)
 ```
 
-- 每个 block 做一次 HVP,同时得到该 block 与所有 block 的交叉项;
+- 每个源 block 做一次**完整模型 HVP**;对所有目标 block 取对应参数块的分量并 flatten 点积,
+  得到该源 block 与所有 block 的交叉项;
 - `cross_terms.csv` 保存完整矩阵(含对角),`rho` 保留符号;
 - 曲率本身很小是正常的(`ΔW_h` 约 1e-4 量级);解释时看 `κ_h` 和 `ρ_hk`,不要只看 `q_h`。
 
@@ -112,7 +117,7 @@ q_hk  = ΔW_hᵀ H_probe ΔW_k
 set -euo pipefail
 BASE=/kaggle/working
 REPO="$BASE/muon_research"
-CODE_COMMIT="99030ac72aa96ba4d27a96a37a537382f9dea0eb"
+CODE_COMMIT="09492212ecc58af85b9ce64d0226a6d49c777663"
 
 if [ ! -d "$REPO/.git" ]; then
   rm -rf "$REPO"
@@ -166,14 +171,17 @@ print('data fingerprint OK')
 PY
 ```
 
-### Cell 2 — 单节点预检（已验证；正式 run 可跳过）
+### Cell 2 — V/O 预检（必须重跑）
 
-**2026-11-21 已在 commit `99030ac` 上通过**（见 1.1 节）。如果正式 notebook 使用同一
-commit、同一数据集，可以直接从 **Cell 3** 开始；`Save & Run All` 时若不想多跑这 1–2 分钟，
-删除或注释 Cell 2 即可。
+旧的 Layer 2 预检只覆盖 Q/K，未覆盖交叉项中的行块/列块问题。现在用 seed0、节点 784、
+Layer 3 覆盖 Q/K/V/O；预期约 2–3 分钟，只写 `stage5_hessian_preflight/`。
 
-若保留，它会用 seed0、节点 784、Layer 2 再验证一次脚本路径、replay 和 HVP；只写
-`stage5_hessian_preflight/`，不污染正式输出。
+**必须通过后才能运行 Cell 3。** 预期：
+
+- `direction_curvature.csv` 48 行（24 blocks × probe/train）；
+- `cross_terms.csv` 576 行（24×24）；
+- `lanczos.csv` 16 行（4 个代表 Head × top-4）；
+- `replay_validation.csv` 2 行，误差 <1e-4。
 
 ```bash
 %%bash
@@ -195,7 +203,7 @@ cd "$REPO"
 python -u analysis/structural_emergence/se_stage5_hessian.py \
   --ckpt-root "$CKPT_ROOT" --data-root "$DATA_ROOT" \
   --out /kaggle/working/stage5_hessian_preflight \
-  --seeds seed0 --nodes 784 --layers 2
+  --seeds seed0 --nodes 784 --layers 3
 python - <<'PY'
 import csv
 from pathlib import Path
@@ -207,8 +215,12 @@ for r in rows:
     assert float(r['g_rel_error']) < 1e-4, r
     assert float(r['delta_w_rel_error']) < 1e-4, r
 d = list(csv.DictReader((out/'direction_curvature.csv').open()))
-assert len(d) == 24, len(d)  # 12 blocks x (probe, train)
-print('preflight direction rows', len(d))
+assert len(d) == 48, len(d)  # 24 blocks x (probe, train)
+c = list(csv.DictReader((out/'cross_terms.csv').open()))
+l = list(csv.DictReader((out/'lanczos.csv').open()))
+assert len(c) == 576, len(c)
+assert len(l) == 16, len(l)
+print('preflight direction/cross/lanczos rows', len(d), len(c), len(l))
 PY
 ```
 
