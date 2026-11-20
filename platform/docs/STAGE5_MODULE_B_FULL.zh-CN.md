@@ -380,7 +380,7 @@ lanczos = rows('lanczos.csv')
 replay = rows('replay_validation.csv')
 
 assert len(direction) == 1920, len(direction)
-assert len(cross) == 57600, len(cross)
+assert len(cross) == 20736, len(cross)
 assert len(lanczos) == 640, len(lanczos)
 assert len(replay) == 8, len(replay)
 
@@ -407,9 +407,10 @@ PY
 du -sh /kaggle/working/stage5_hessian
 ```
 
-行数来源：每个 `(seed,node)` 60 个 block；probe+train 120 行，cross 60²=3600 行；
-Lanczos 每 `(seed,node)` 10 个代表 Head ×4=40 行；16 个 `(seed,node)` 得到
-1920/57600/640。Role 文件只在新节点 784/1312，两个参数共 8 行。
+行数来源：每个 `(seed,node)` 60 个 block；probe+train 120 行。交叉项按层分别计算：
+L0 24² + L2 12² + L3 24² = 1296（seed0），seed1 同样是 1296；两个 seed 共 2592 行/节点，
+8 个节点得到 20736。Lanczos 每 `(seed,node)` 10 个代表 Head ×4=40 行，共 640。
+Role 文件只在新节点 784/1312，两个参数共 8 行。
 
 ### Cell 6 — 从 CSV 生成图（可选）
 
@@ -478,7 +479,7 @@ PY
 ```text
 COMPLETE
 direction_curvature.csv   1920 行
-cross_terms.csv           57600 行
+cross_terms.csv           20736 行
 lanczos.csv               640 行
 replay_validation.csv     8 行
 run_summary.json
