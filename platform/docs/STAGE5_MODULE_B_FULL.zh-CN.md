@@ -106,19 +106,30 @@ test "$(git -C "$REPO" rev-parse HEAD)" = "$CODE_COMMIT"
 export CKPT_ROOT="$(python - <<'PY'
 from pathlib import Path
 hits = [p for p in Path('/kaggle/input').rglob('pre_u000784.pt')
-        if 'fp32-muon-ckpt-1536' in str(p) and p.parent.name == 'node_checkpoints']
-assert hits, 'no fp32-muon-ckpt-1536 pre_u000784.pt'
+        if 'fp32-muon-ckpt-1536' in str(p)
+        and p.parent.name == 'node_checkpoints'
+        and p.parents[1].name == 'seed0']
+assert hits, 'no seed0 pre_u000784.pt under fp32-muon-ckpt-1536'
 p = hits[0]
 # .../structural_concentration_ckpt/seed0/node_checkpoints/pre_u000784.pt
-assert p.parents[1].name == 'seed0', p
 print(p.parents[2])
 PY
 )"
 export DATA_ROOT="$(python - <<'PY'
+import json
 from pathlib import Path
 hits = list(Path('/kaggle/input').rglob('slimpajama_8x/manifest.json'))
-assert len(hits) == 1, hits
-print(hits[0].parent)
+chosen = None
+for p in hits:
+    try:
+        m = json.loads(p.read_text())
+    except Exception:
+        continue
+    if m.get('fingerprint') == 'ba3ac442ab488991beaa93a65652a52fbe56899509fa46e5edfc288b86173489':
+        chosen = p
+        break
+assert chosen is not None, [str(p) for p in hits]
+print(chosen.parent)
 PY
 )"
 
