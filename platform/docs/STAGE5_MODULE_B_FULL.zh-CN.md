@@ -43,6 +43,22 @@
 > HVP 后释放。因此正式峰值应在 7–8 GiB 量级。若仍看到 >13 GiB,不要继续跑完整节点集,
 > 先把 `run.log` 的节点/层位置贴回来。
 
+### 1.1 预检已通过（2026-11-21）
+
+在 commit `99030ac` 上，seed0 / node 784 / Layer 2 的交互式预检已通过：
+
+| 参数 | `delta_w_rel_error` | `g_rel_error` |
+|---|---:|---:|
+| `transformer.h.0.attn.c_attn.weight` | `2.5508e-5` | `4.038e-7` |
+| `transformer.h.0.attn.c_proj.weight` | `5.900e-6` | `3.948e-7` |
+
+- `direction_curvature.csv` 行数：24（12 blocks × probe/train）；
+- HVP、Role 对比、CSV flush 全部正常；
+- 误差远低于 `1e-4` 验收线。
+
+因此正式提交时 **Cell 2 可以跳过**。若担心 commit/数据集环境变化，保留 Cell 2 作为
+1–2 分钟守卫也可以；它只写 `/kaggle/working/stage5_hessian_preflight`，不影响正式输出。
+
 ## 2. 本轮计算什么
 
 对每个 `(seed, node, layer)`:
@@ -150,10 +166,14 @@ print('data fingerprint OK')
 PY
 ```
 
-### Cell 2 — 单节点预检(建议保留)
+### Cell 2 — 单节点预检（已验证；正式 run 可跳过）
 
-先用 seed0、节点 784、Layer 2 跑 ~1–2 分钟,确认脚本路径、replay 和 HVP 都正常。
-预检只写 `stage5_hessian_preflight/`,不污染正式输出。
+**2026-11-21 已在 commit `99030ac` 上通过**（见 1.1 节）。如果正式 notebook 使用同一
+commit、同一数据集，可以直接从 **Cell 3** 开始；`Save & Run All` 时若不想多跑这 1–2 分钟，
+删除或注释 Cell 2 即可。
+
+若保留，它会用 seed0、节点 784、Layer 2 再验证一次脚本路径、replay 和 HVP；只写
+`stage5_hessian_preflight/`，不污染正式输出。
 
 ```bash
 %%bash
