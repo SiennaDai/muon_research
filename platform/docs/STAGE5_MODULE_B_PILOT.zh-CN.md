@@ -114,7 +114,7 @@ coef = min(1.0, 1.0 / float(total_norm))
 idx = next(i for i, p in enumerate(params) if p is param)
 g_opt = coef * grads[idx].detach()
 rel = float((g_opt - saved_g).norm() / saved_g.norm())
-print({"loss": float(loss), "grad_seconds": t_grad, "total_norm": float(total_norm),
+print({"loss": float(loss.detach()), "grad_seconds": t_grad, "total_norm": float(total_norm),
        "clip_coef": coef, "replay_G_rel_error": rel,
        "peak_MiB": torch.cuda.max_memory_allocated() / 1024**2})
 del loss, grads, g_opt
@@ -166,7 +166,7 @@ SL_K = slice(192, 256)   # Q Head 3
 v = block_vector(SL_H)
 w = block_vector(SL_H)
 loss_v, hv_v, dt_v, peak_v = hvp_time(probe_loss, v)
-probe_loss_value = float(loss_v)
+probe_loss_value = float(loss_v.detach())
 _, hv_w, dt_w, _ = hvp_time(probe_loss, w)
 hv_v_block = hv_v[id(param)][SL_H, :]
 hv_w_block = hv_w[id(param)][SL_H, :]
