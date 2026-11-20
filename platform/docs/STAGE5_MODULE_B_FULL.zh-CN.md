@@ -49,6 +49,22 @@
 | Lanczos | 30 步；每个 type 取 `||ΔW_h||` 最大的 Head，top-4 |
 | 预检 | seed0 / node 784 / L3（Q/K/V/O） |
 
+### 1.2 正式运行实测（2026-11-21）
+
+Kernel `siennadai/muon-hession-fp32` 已成功完成：
+
+- `COMPLETE` 标记存在；
+- `direction_curvature.csv` 1920 行；
+- `cross_terms.csv` **20736 行**（按层 24²+12²+24²，而不是 57600）；
+- `lanczos.csv` 640 行；
+- `replay_validation.csv` 8 行；
+- replay 最大误差：G `5.13e-7`，ΔW `2.62e-5`；
+- 交叉矩阵最大相对不对称：`6.87e-7`；
+- 16 个 `(seed,node)`，每节点约 287 秒，峰值约 4383 MiB；
+- 输出已下载到 `/mnt/d/muon_research/results/stage5_hessian_final`。
+
+Cell 5 的旧 `57600` 断言已改成 `20736`。
+
 ## 2. 关键实现说明
 
 ### 2.1 重放 ΔW
