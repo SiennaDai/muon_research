@@ -245,9 +245,11 @@ touch "$PRE/PREFLIGHT_OK"
 echo "PREFLIGHT_OK written"
 ```
 
-### Cell 3 — 正式运行（后台）
+### Cell 3 — 正式运行（后台；哨兵缺失时自动补跑预检）
 
-先检查预检哨兵；没有通过就不会启动正式 run。
+> Kaggle commit 从全新的 `/kaggle/working` 开始；交互式运行 Cell 2 产生的 `PREFLIGHT_OK`
+> 不会自动带进 commit。Cell 3 在哨兵缺失时会先自动跑一遍 V/O 预检；Cell 2 已经在
+> 本次运行中通过则直接跳过。
 
 ```bash
 %%bash
@@ -255,9 +257,6 @@ set -euo pipefail
 REPO=/kaggle/working/muon_research
 OUT=/kaggle/working/stage5_hessian
 PRE=/kaggle/working/stage5_hessian_preflight
-test -f "$PRE/PREFLIGHT_OK"
-rm -rf "$OUT"
-mkdir -p "$OUT"
 
 export CKPT_ROOT="$(python - <<'PY'
 from pathlib import Path
@@ -286,6 +285,41 @@ PY
 )"
 
 cd "$REPO"
+if [ ! -f "$PRE/PREFLIGHT_OK" ]; then
+  echo "PREFLIGHT_OK missing; running V/O preflight now"
+  rm -rf "$PRE"
+  python -u analysis/structural_emergence/se_stage5_hessian.py \
+    --ckpt-root "$CKPT_ROOT" --data-root "$DATA_ROOT" \
+    --out "$PRE" --seeds seed0 --nodes 784 --layers 3
+  python - "$PRE" <<'PY'
+import csv, math, sys
+from pathlib import Path
+out = Path(sys.argv[1])
+assert (out / 'COMPLETE').is_file(), 'preflight did not write COMPLETE'
+def rows(name):
+    p = out / name
+    assert p.is_file(), p
+    return list(csv.DictReader(p.open()))
+direction = rows('direction_curvature.csv')
+cross = rows('cross_terms.csv')
+lanczos = rows('lanczos.csv')
+replay = rows('replay_validation.csv')
+assert len(direction) == 48, len(direction)
+assert len(cross) == 576, len(cross)
+assert len(lanczos) == 16, len(lanczos)
+assert len(replay) == 2, len(replay)
+for r in replay:
+    assert float(r['g_rel_error']) < 1e-4, r
+    assert float(r['delta_w_rel_error']) < 1e-4, r
+finite = [float(r['kappa']) for r in direction if r['loss'] in {'probe','train'}]
+assert all(math.isfinite(x) for x in finite)
+print('V/O preflight OK:', len(direction), len(cross), len(lanczos), len(replay))
+PY
+  touch "$PRE/PREFLIGHT_OK"
+fi
+
+rm -rf "$OUT"
+mkdir -p "$OUT"
 export PYTHONUNBUFFERED=1
 nohup python -u analysis/structural_emergence/se_stage5_hessian.py \
   --ckpt-root "$CKPT_ROOT" --data-root "$DATA_ROOT" --out "$OUT" \
