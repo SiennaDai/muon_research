@@ -356,6 +356,7 @@ def run_nodes(args) -> None:
         del model, engine
         torch.cuda.empty_cache()
     flush()
+    (out / "COMPLETE").write_text("ok\n")
     print(f"[stage5] wrote {out}")
 
 
