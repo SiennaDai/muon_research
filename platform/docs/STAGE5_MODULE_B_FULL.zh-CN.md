@@ -98,7 +98,10 @@ BASE=/kaggle/working
 REPO="$BASE/muon_research"
 CODE_COMMIT="e60546e83ce6d965cf77868a5564dcae32ed4418"
 
-[ -d "$REPO/.git" ] || git clone https://github.com/SiennaDai/muon_research "$REPO"
+if [ ! -d "$REPO/.git" ]; then
+  rm -rf "$REPO"
+  git clone https://github.com/SiennaDai/muon_research "$REPO"
+fi
 git -C "$REPO" fetch --all --tags
 git -C "$REPO" checkout --detach "$CODE_COMMIT"
 test "$(git -C "$REPO" rev-parse HEAD)" = "$CODE_COMMIT"
