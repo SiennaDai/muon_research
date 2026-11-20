@@ -111,7 +111,7 @@ torch.cuda.synchronize()
 t_grad = time.time() - t0
 total_norm = torch.sqrt(sum((g.detach().float() ** 2).sum() for g in grads if g is not None))
 coef = min(1.0, 1.0 / float(total_norm))
-idx = params.index(param)
+idx = next(i for i, p in enumerate(params) if p is param)
 g_opt = coef * grads[idx].detach()
 rel = float((g_opt - saved_g).norm() / saved_g.norm())
 print({"loss": float(loss), "grad_seconds": t_grad, "total_norm": float(total_norm),
