@@ -123,7 +123,15 @@ torch.cuda.empty_cache()
 
 ## Cell 4 — HVP 工具
 
+> Hessian 需要 double backward;Flash/efficient SDPA 未实现该导数,因此 HVP 必须使用
+> math attention。Cell 3 的 replay G 仍用训练时的 auto 后端;这里只影响后续 HVP。
+
 ```python
+# Force the math attention path: required for second-order autograd.
+torch.backends.cuda.enable_flash_sdp(False)
+torch.backends.cuda.enable_mem_efficient_sdp(False)
+torch.backends.cuda.enable_math_sdp(True)
+
 def zero_vectors():
     return {id(p): torch.zeros_like(p) for p in params}
 
