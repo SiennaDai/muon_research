@@ -196,6 +196,22 @@ def run_nodes(args) -> None:
                "lanczos_steps": args.lanczos_steps,
                "probe_windows": PROBE_WINDOWS, "train_chunk": TRAIN_CHUNK,
                "runs": []}
+
+    def flush() -> None:
+        def write(name, fields, rows):
+            if not rows:
+                return
+            with (out / name).open("w", newline="") as handle:
+                writer = csv.DictWriter(handle, fieldnames=fields)
+                writer.writeheader(); writer.writerows(rows)
+        write("direction_curvature.csv", DIRECTION_FIELDS, direction_rows)
+        write("cross_terms.csv", ["seed", "node", "layer", "loss", "h_type",
+                                  "h_head", "k_type", "k_head", "q_hk", "rho"], cross_rows)
+        write("replay_validation.csv", ["seed", "node", "parameter",
+                                        "delta_w_rel_error", "g_rel_error"], replay_rows)
+        write("lanczos.csv", LANCZOS_FIELDS, lanczos_rows)
+        (out / "run_summary.json").write_text(json.dumps(summary, indent=2))
+
     device = torch.device("cuda:0")
     for seed in args.seeds:
         cfg = load_recipe(ROOT / f"platform/recipes/structural_emergence_30m_fp32_muon_{seed[-1]}.json")
@@ -319,28 +335,18 @@ def run_nodes(args) -> None:
                             "rank": rank, "eigenvalue": float(eigenvalue),
                             "lanczos_steps": args.lanczos_steps,
                             "last_beta": betas[-1] if betas else float("nan")})
+                flush()
                 print(f"[stage5] {seed} node {node} layer {layer}: "
                       f"probe/train/lanczos done", flush=True)
             summary["runs"].append({"seed": seed, "node": node,
                                     "seconds": time.time() - started,
                                     "peak_MiB": torch.cuda.max_memory_allocated()/1024**2})
+            flush()
             del checkpoint, sidecar, x_probe, y_probe, dw
             torch.cuda.empty_cache()
         del model, engine
         torch.cuda.empty_cache()
-    def write(name, fields, rows):
-        if not rows:
-            return
-        with (out / name).open("w", newline="") as handle:
-            writer = csv.DictWriter(handle, fieldnames=fields)
-            writer.writeheader(); writer.writerows(rows)
-    write("direction_curvature.csv", DIRECTION_FIELDS, direction_rows)
-    write("cross_terms.csv", ["seed", "node", "layer", "loss", "h_type",
-                              "h_head", "k_type", "k_head", "q_hk", "rho"], cross_rows)
-    write("replay_validation.csv", ["seed", "node", "parameter",
-                                    "delta_w_rel_error", "g_rel_error"], replay_rows)
-    write("lanczos.csv", LANCZOS_FIELDS, lanczos_rows)
-    (out / "run_summary.json").write_text(json.dumps(summary, indent=2))
+    flush()
     print(f"[stage5] wrote {out}")
 
 
