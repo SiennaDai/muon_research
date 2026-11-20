@@ -31,6 +31,9 @@ from optim.muon_structural_collector import (
     MuonStructuralCollector, StructuralBeginContext, StructuralPauseRequest,
     StructuralRunContext, resolve_structural_config,
 )
+from optim.muon_node_checkpoint import (
+    MuonNodeCheckpointCollector, NodeRunContext, resolve_node_config,
+)
 
 
 class NonFiniteMetricError(RuntimeError):
@@ -174,7 +177,7 @@ def _checkpoint(cfg, model, optimizer, sampler, completed, processed, run_id, se
         "rng": rng_state(torch.cuda.is_available()), "elapsed_seconds": elapsed, "run_id": run_id, "next_segment_id": segment+1}
 
 
-def run(cfg: dict, run_dir: Path, resume: Path | None = None, max_wall_seconds: float | None = None, to_device: str = "auto", stop_at_update: int | None = None, snapshot_config_path: str | Path | None = None, structural_config_path: str | Path | None = None):
+def run(cfg: dict, run_dir: Path, resume: Path | None = None, max_wall_seconds: float | None = None, to_device: str = "auto", stop_at_update: int | None = None, snapshot_config_path: str | Path | None = None, structural_config_path: str | Path | None = None, node_checkpoint_config_path: str | Path | None = None):
     root = Path(__file__).resolve().parents[1]
     run_dir = run_dir.resolve()
     # Validate the sidecars before creating any run artifacts.  New runs default
@@ -184,6 +187,8 @@ def run(cfg: dict, run_dir: Path, resume: Path | None = None, max_wall_seconds: 
         total_updates=cfg["derived"]["total_updates"], resume=resume is not None)
     structural_config = resolve_structural_config(
         structural_config_path, run_dir=run_dir, resume=resume is not None)
+    node_config = resolve_node_config(
+        node_checkpoint_config_path, run_dir=run_dir, resume=resume is not None)
     run_dir.mkdir(parents=True, exist_ok=True)
     source_info = source_snapshot(root)
     environment_info = environment_snapshot()
@@ -316,12 +321,44 @@ def run(cfg: dict, run_dir: Path, resume: Path | None = None, max_wall_seconds: 
         structural_collector = MuonStructuralCollector(
             run_dir=run_dir, config=structural_config,
             context=structural_context, completed_updates=completed)
-    if snapshot_config.enabled or structural_config.enabled:
+    node_collector = None
+    if node_config.enabled:
+        if cfg["optimizer"]["name"] != "reference_muon":
+            raise ValueError("node checkpoints require optimizer.name == 'reference_muon'")
+        if cfg["optimizer"].get("state_simulation", "none") != "none":
+            raise ValueError("node checkpoints require optimizer.state_simulation == 'none'")
+        if not muon_parameter_order:
+            raise ValueError("node checkpoints require a non-empty Muon group")
+        node_context = NodeRunContext(
+            run_id=run_id, segment_id=segment,
+            recipe_fingerprint=cfg["fingerprint"],
+            data_fingerprint=manifest["fingerprint"],
+            config_hash=node_config.config_hash,
+            model_config=cfg["model"], parameter_records=records,
+            muon_parameter_order=muon_parameter_order,
+            train_config=cfg["train"], data_config=cfg["data"],
+            tokens_per_update=cfg["derived"]["tokens_per_update"],
+            seeds=seeds, source=source_info, environment=environment_info,
+            device=str(device), precision=cfg["precision"],
+        )
+        node_collector = MuonNodeCheckpointCollector(
+            run_dir=run_dir, config=node_config, context=node_context,
+            completed_updates=completed)
+        if node_collector.should_save(0):
+            node_collector.save_base(
+                update=0, model=model, optimizer=optimizer,
+                sampler_state=sampler.state_dict(), processed_target_tokens=0,
+                window_ids=[], micro_batch_window_ids=[],
+                sampler_epoch_before=sampler.epoch, sampler_offset_before=sampler.offset,
+                sampler_epoch_after=sampler.epoch, sampler_offset_after=sampler.offset)
+    if snapshot_config.enabled or structural_config.enabled or node_config.enabled:
         def _research_observer(**kwargs):
             if snapshot_collector is not None:
                 snapshot_collector.observe(**kwargs)
             if structural_collector is not None:
                 structural_collector.observe(**kwargs)
+            if node_collector is not None:
+                node_collector.observe(**kwargs)
         optimizer.set_snapshot_observer(_research_observer, name_by_id)
     writer = EventWriter(run_dir/"metrics.jsonl", run_id, segment)
     state_diagnostics_enabled = bool(cfg["logging"].get("state_diagnostics", False))
@@ -442,6 +479,8 @@ def run(cfg: dict, run_dir: Path, resume: Path | None = None, max_wall_seconds: 
                     status, reason = "paused_disk", str(exc)
                     print(f"[pause] {exc}; saving resumable checkpoint")
                     break
+            node_save = node_collector is not None and node_collector.should_save(update)
+            sampler_state_before = sampler.state_dict() if node_save else None
             sampler_epoch_before, sampler_offset_before = sampler.epoch, sampler.offset
             ids = sampler.take(cfg["train"]["micro_batch_size"]*cfg["train"]["accumulation_steps"])
             sampler_epoch_after, sampler_offset_after = sampler.epoch, sampler.offset
@@ -449,6 +488,17 @@ def run(cfg: dict, run_dir: Path, resume: Path | None = None, max_wall_seconds: 
             micro_batch_window_ids = tuple(
                 tuple(ids[a*micro_batch_size:(a+1)*micro_batch_size])
                 for a in range(cfg["train"]["accumulation_steps"]))
+            if node_save:
+                node_collector.save_base(
+                    update=update, model=model, optimizer=optimizer,
+                    sampler_state=sampler_state_before,
+                    processed_target_tokens=processed,
+                    window_ids=list(ids),
+                    micro_batch_window_ids=[list(group) for group in micro_batch_window_ids],
+                    sampler_epoch_before=sampler_epoch_before,
+                    sampler_offset_before=sampler_offset_before,
+                    sampler_epoch_after=sampler_epoch_after,
+                    sampler_offset_after=sampler_offset_after)
             nll_sum = 0.0; n_tokens = 0; step_started = time.monotonic()
             for a in range(cfg["train"]["accumulation_steps"]):
                 batch_ids = ids[a*cfg["train"]["micro_batch_size"]:(a+1)*cfg["train"]["micro_batch_size"]]
@@ -503,6 +553,8 @@ def run(cfg: dict, run_dir: Path, resume: Path | None = None, max_wall_seconds: 
                 snapshot_collector.finish_update(update=update, train_nll=train_nll)
             if structural_collector is not None:
                 structural_collector.finish_update(update=update, train_nll=train_nll)
+            if node_collector is not None:
+                node_collector.finish_roles(update=update)
             if collector is not None:
                 diagnostic = collector.finish_update(update=update, processed_target_tokens=processed+n_tokens,
                     train_nll=train_nll, pre_clip_grad_norm=grad_norm_value, learning_rate=lr)
@@ -566,6 +618,8 @@ def run(cfg: dict, run_dir: Path, resume: Path | None = None, max_wall_seconds: 
             snapshot_collector.close()
         if structural_collector is not None:
             structural_collector.close(completed_updates=completed)
+        if node_collector is not None:
+            node_collector.close()
     elapsed=prior_elapsed+time.monotonic()-started
     # A divergence artifact is terminal and non-resumable.  A KeyboardInterrupt
     # may have happened mid-update, so the in-memory model/optimizer and the
