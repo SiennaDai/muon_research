@@ -12,7 +12,7 @@
 | 项目 | 固定值 |
 |---|---|
 | 仓库 | `https://github.com/SiennaDai/muon_research` |
-| 本 runbook 的代码 commit | `cb2ee985a2873a15c63737df9201e5e8e5a581b0` |
+| 本 runbook 的代码 commit | `e60546e83ce6d965cf77868a5564dcae32ed4418` |
 | 分析脚本 | `analysis/structural_emergence/se_stage5_hessian.py` |
 | Checkpoint 数据集 | `siennadai/fp32-muon-ckpt-1536` |
 | Checkpoint 根目录 | `.../structural_concentration_ckpt` |
@@ -96,7 +96,7 @@ q_hk  = ΔW_hᵀ H_probe ΔW_k
 set -euo pipefail
 BASE=/kaggle/working
 REPO="$BASE/muon_research"
-CODE_COMMIT="cb2ee985a2873a15c63737df9201e5e8e5a581b0"
+CODE_COMMIT="e60546e83ce6d965cf77868a5564dcae32ed4418"
 
 [ -d "$REPO/.git" ] || git clone https://github.com/SiennaDai/muon_research "$REPO"
 git -C "$REPO" fetch --all --tags
