@@ -214,7 +214,7 @@ def run_nodes(args) -> None:
 
     device = torch.device("cuda:0")
     for seed in args.seeds:
-        cfg = load_recipe(ROOT / f"platform/recipes/structural_emergence_30m_fp32_muon_{seed[-1]}.json")
+        cfg = load_recipe(ROOT / f"platform/recipes/structural_emergence_30m_fp32_muon_s{seed[-1]}.json")
         manifest = load_manifest(Path(args.data_root) / "manifest.json")
         train = FrozenWindows(manifest, "train", 256)
         val = FrozenWindows(manifest, "validation", 256)
