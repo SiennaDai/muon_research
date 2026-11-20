@@ -201,32 +201,55 @@ del loss_v, hv_v, hv_w, hv_d, hv_k, v, w, dv, dk
 torch.cuda.empty_cache()
 ```
 
-## Cell 6 — L_train HVP、分块等价性
+## Cell 6 — L_train HVP(分块)
+
+> 32-window 整批 HVP 在 T4 + math attention 上会 OOM(实测 ~13.3 GiB)。
+> 均值 loss 的 Hessian 对等大小分块是线性的,因此用 4 个 8-window 分块的平均;
+> 再尝试 2 个 16-window 分块,若内存允许则与 4×8 对照。
 
 ```python
 train_loss_fn = lambda: model(x_train, y_train)["loss"]
 vt = block_vector(SL_H)
-_, hvt, dt_full, peak_full = hvp_time(train_loss_fn, vt)
-full_block = hvt[id(param)][SL_H, :].detach().clone()
-del hvt
-torch.cuda.empty_cache()
 
-chunks = [meta["window_ids"][i * 8:(i + 1) * 8] for i in range(4)]
-chunk_hv = torch.zeros_like(full_block)
-t0 = time.time()
-for chunk in chunks:
-    xc, yc = batch(chunk, "train")
-    fn = lambda xc=xc, yc=yc: model(xc, yc)["loss"]
-    bv = zero_vectors(); bv[id(param)][SL_H, :] = vt[id(param)][SL_H, :]
-    _, hv, _, _ = hvp_time(fn, bv)
-    chunk_hv += hv[id(param)][SL_H, :].detach()
-    del hv, bv, xc, yc
+def chunked_hvp(chunk_windows):
+    result = torch.zeros_like(param[SL_H, :])
+    seconds, peaks = [], []
+    v = zero_vectors(); v[id(param)][SL_H, :] = vt[id(param)][SL_H, :]
+    t0 = time.time()
+    for chunk in chunk_windows:
+        xc, yc = batch(chunk, "train")
+        fn = lambda xc=xc, yc=yc: model(xc, yc)["loss"]
+        _, hv, dt, peak = hvp_time(fn, v)
+        result += hv[id(param)][SL_H, :].detach()
+        seconds.append(dt); peaks.append(peak)
+        del hv, xc, yc
+        torch.cuda.empty_cache()
+    return result / len(chunk_windows), seconds, peaks, time.time() - t0
+
+chunk8 = [meta["window_ids"][i * 8:(i + 1) * 8] for i in range(4)]
+chunk8_hv, chunk8_seconds, chunk8_peaks, chunk8_total = chunked_hvp(chunk8)
+
+try:
+    chunk16 = [meta["window_ids"][:16], meta["window_ids"][16:]]
+    chunk16_hv, chunk16_seconds, chunk16_peaks, chunk16_total = chunked_hvp(chunk16)
+    chunk_rel = float((chunk16_hv - chunk8_hv).norm() / chunk8_hv.norm())
+    method = "2x16 vs 4x8"
+    chunk16_peak = max(chunk16_peaks)
+except RuntimeError as exc:
+    if "out of memory" not in str(exc).lower():
+        raise
     torch.cuda.empty_cache()
-chunk_hv /= len(chunks)
-chunk_rel = float((chunk_hv - full_block).norm() / full_block.norm())
-chunk_seconds = time.time() - t0
-print({"train": {"tokens": int(x_train.numel()), "hvp_seconds": dt_full,
-                 "peak_MiB": peak_full, "chunk_seconds": chunk_seconds,
+    chunk16_hv = None
+    chunk16_total = None
+    chunk16_peak = None
+    chunk_rel = None
+    method = "4x8 only (16-window OOM)"
+
+print({"train": {"tokens": int(x_train.numel()), "method": method,
+                 "chunk8_seconds": chunk8_total,
+                 "chunk8_max_peak_MiB": max(chunk8_peaks),
+                 "chunk16_seconds": chunk16_total,
+                 "chunk16_max_peak_MiB": chunk16_peak,
                  "chunk_rel_error": chunk_rel}})
 ```
 
@@ -283,8 +306,11 @@ summary = {
     "probe": {"loss": probe_loss_value, "hvp_seconds": dt_v,
               "symmetry_rel_error": sym, "q_h": q_h, "q_hk": q_hk,
               "peak_MiB": peak_v},
-    "train": {"tokens": int(x_train.numel()), "hvp_seconds": dt_full,
-              "peak_MiB": peak_full, "chunk_seconds": chunk_seconds,
+    "train": {"tokens": int(x_train.numel()), "method": method,
+              "chunk8_seconds": chunk8_total,
+              "chunk8_max_peak_MiB": max(chunk8_peaks),
+              "chunk16_seconds": chunk16_total,
+              "chunk16_max_peak_MiB": chunk16_peak,
               "chunk_rel_error": chunk_rel},
     "lanczos": {"4_seconds": t4, "20_seconds": t20,
                 "top4": [float(x) for x in e20[-4:]],
