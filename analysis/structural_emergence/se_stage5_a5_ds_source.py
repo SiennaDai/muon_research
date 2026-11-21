@@ -18,7 +18,8 @@ Exact identities:
     eta_p    = ||dA V^T||^2 / (||dA||^2 ||V||^2)
 
 One row is written per (seed, node, loss, layer, head, window).  Probe uses
-8 windows; train uses the four micro-batch groups of the checkpoint sidecar.
+8 windows; train uses the checkpoint sidecar's micro-batch groups (8 groups
+of 4 windows for this recipe, 32 windows total).
 """
 from __future__ import annotations
 
