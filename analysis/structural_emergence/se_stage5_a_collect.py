@@ -163,8 +163,10 @@ def compute_g(datas):
         am = a[layer].reshape(-1, 384).float()
         for key, dh in split_qkv(dy[layer]).items():
             g[(layer, key[0], key[1])] = dh.float().T @ xm
-        for key, dh in split_o(do[layer]).items():
-            g[(layer, key[0], key[1])] = dh.float().T @ am
+        for head in range(6):
+            # O heads are columns of c_proj: G_h = dO^T A_h, shape [384,64].
+            ah = a[layer].reshape(-1, 384).float()[:, head * 64:(head + 1) * 64]
+            g[(layer, "O", head)] = do[layer].reshape(-1, 384).float().T @ ah
     return g, x, a, dy, do
 
 
@@ -251,16 +253,28 @@ def head_metrics(pass_data, loss_name, seed, node, clip_coef, total_norm):
                 G = g[(layer, type_name, head)]
                 gu, gs, gv, gfull = svd_metrics(G, 8)
                 if type_name == "O":
-                    dh = do[layer].reshape(-1, 384).float()[:, head * 64:(head + 1) * 64]
-                    inp = input_a
+                    # O is a column block of c_proj: G is [384,64].
+                    do_full = do[layer].reshape(-1, 384).float()
+                    ah = a[layer].reshape(-1, 384).float()[
+                        :, head * 64:(head + 1) * 64]
+                    du, ds, dv, dfull = svd_metrics(do_full.T, 8)
+                    au, ass, av, afull = svd_metrics(ah.T, 16)
+                    inp = {
+                        "fro": float(ah.norm()), "top1": float(afull[0]),
+                        "eff": effective_rank(afull), "u": au,
+                    }
+                    spectra[f"{loss_name}|L{layer}|O|H{head}|input|s"] = ass.cpu().numpy()
+                    spectra[f"{loss_name}|L{layer}|O|H{head}|input|v"] = au[:, :16].T.cpu().numpy()
+                    dy_fro = float(do_full.norm())
                 else:
                     base = {"Q": 0, "K": 384, "V": 768}[type_name]
                     dh = dy[layer].reshape(-1, 1152).float()[
                         :, base + head * 64:base + (head + 1) * 64]
+                    # dY_h is [N,64]; transpose so its left singular vectors
+                    # live in the 64-dimensional feature space and align with G.
+                    du, ds, dv, dfull = svd_metrics(dh.T, 8)
                     inp = input_x
-                # dY_h is [N,64]; transpose so its left singular vectors
-                # live in the 64-dimensional feature space and align with G.
-                du, ds, dv, dfull = svd_metrics(dh.T, 8)
+                    dy_fro = float(dh.norm())
                 g_fro = float(G.norm())
                 spectra[f"{loss_name}|L{layer}|{type_name}|H{head}|dy|s"] = ds.cpu().numpy()
                 spectra[f"{loss_name}|L{layer}|{type_name}|H{head}|dy|u"] = du[:, :8].T.cpu().numpy()
@@ -273,7 +287,7 @@ def head_metrics(pass_data, loss_name, seed, node, clip_coef, total_norm):
                     "g_fro": g_fro, "g_share": shares[(type_name, head)],
                     "g_top1_share": top1_share(gfull), "g_eff_rank": effective_rank(gfull),
                     "g_stable_rank": stable_rank(gfull),
-                    "dy_fro": float(dh.norm()), "dy_top1": float(dfull[0]),
+                    "dy_fro": dy_fro, "dy_top1": float(dfull[0]),
                     "dy_eff_rank": effective_rank(dfull),
                     "input_fro": inp["fro"], "input_top1": inp["top1"],
                     "input_eff_rank": inp["eff"],
