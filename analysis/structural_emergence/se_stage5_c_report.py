@@ -286,6 +286,10 @@ def write_report(out, val, role, role_sum, loss, align):
                      f"`{b.loc[b['delta_L_actual'].idxmin(), 'layer']}`。")
     lines.append("")
     if not align.empty:
+        match_u = (align["C_U_top"] == align["B_kappa_top"]).mean()
+        match_g = (align["C_G_top"] == align["B_kappa_top"]).mean()
+        lines.append(f"- 事件行 top-head 命中 B κ：C G `{match_g:.1%}`，C U `{match_u:.1%}`。")
+        lines.append("")
         lines.append("## 5. 事件节点的 A/B/C 对齐\n")
         for _, r in align.iterrows():
             lines.append(f"- {r['seed']} node {r['node']} L{r['layer']} {r['type']}："
