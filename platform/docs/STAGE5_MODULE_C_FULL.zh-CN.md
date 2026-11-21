@@ -37,7 +37,7 @@
 | 项目 | 固定值 |
 |---|---|
 | 仓库 | `https://github.com/SiennaDai/muon_research` |
-| 本文代码 commit | `53ab79925eb8de6147c1d57e24392cb4e691410e` |
+| 本文代码 commit | `f4e92636ea227dc0084211383ca218523e16c9a7` |
 | 分析脚本 | `analysis/structural_emergence/se_stage5_c_analyze.py` |
 | B 指标（随仓库） | `analysis/structural_emergence/stage5_b_metrics/` |
 | Checkpoint 数据集 | `siennadai/fp32-muon-ckpt-1536` |
@@ -64,12 +64,11 @@
 
 ### 2.2 Head 子空间损失（forward-only）
 
-在事件节点 784/1312 上，对每一层定义 10 个子空间：
+在事件节点 784/1312 上按 B 的 Hessian 覆盖范围定义子空间：
 
-```text
-all_Q, all_K, all_V, all_O, all_QKV, all_attn,
-top_Q, top_K, top_V, top_O
-```
+- 所有层：`all_Q, all_K, all_QK, top_Q, top_K`（5 个）；
+- 只有 L0/L3：再加 `all_V, all_O, all_QKV, all_attn, top_V, top_O`（每层 11 个）；
+- L2/L4 没有 B 的 V/O Hessian，所以不计算 V/O 子空间。
 
 `top_*` 使用 B 的 probe κ 最大 Head。
 
@@ -97,7 +96,7 @@ top_Q, top_K, top_V, top_O
 set -euo pipefail
 BASE=/kaggle/working
 REPO="$BASE/muon_research"
-CODE_COMMIT="53ab79925eb8de6147c1d57e24392cb4e691410e"
+CODE_COMMIT="f4e92636ea227dc0084211383ca218523e16c9a7"
 
 if [ ! -d "$REPO/.git" ]; then
   rm -rf "$REPO"
@@ -155,7 +154,7 @@ PY
 预期：
 
 - `role_dynamics.csv` **2880 行**（seed0 的 20 个 role 节点 ×6 层 ×4 类型 ×6 Heads）；
-- `head_loss.csv` **30 行**（3 层 ×10 子空间）；
+- `head_loss.csv` **27 行**（L0 11 + L2 5 + L3 11）；
 - `COMPLETE` 存在；
 - role 份额每组合和为 1；
 - `delta_L_actual`、`first_order`、`second_order`、`delta_L_taylor` 有限。
@@ -210,7 +209,7 @@ def rows(name):
 role = rows('role_dynamics.csv')
 loss = rows('head_loss.csv')
 assert len(role) == 2880, len(role)
-assert len(loss) == 30, len(loss)
+assert len(loss) == 27, len(loss)
 groups = {}
 for r in role:
     key = (r['seed'], r['node'], r['layer'], r['type'])
@@ -278,7 +277,7 @@ assert (out / 'COMPLETE').is_file(), 'preflight missing COMPLETE'
 role = list(csv.DictReader((out/'role_dynamics.csv').open()))
 loss = list(csv.DictReader((out/'head_loss.csv').open()))
 assert len(role) == 2880, len(role)
-assert len(loss) == 30, len(loss)
+assert len(loss) == 27, len(loss)
 groups = {}
 for r in role:
     key = (r['seed'], r['node'], r['layer'], r['type'])
@@ -343,7 +342,7 @@ def rows(name):
 role = rows('role_dynamics.csv')
 loss = rows('head_loss.csv')
 assert len(role) == 5760, len(role)
-assert len(loss) == 120, len(loss)
+assert len(loss) == 108, len(loss)
 groups = {}
 for r in role:
     key = (r['seed'], r['node'], r['layer'], r['type'])
@@ -369,7 +368,7 @@ du -sh /kaggle/working/stage5_c
 stage5_c/
   COMPLETE
   role_dynamics.csv     5760 行
-  head_loss.csv         120 行
+  head_loss.csv         108 行
   run_summary.json
   run.log / run.pid
 ```
