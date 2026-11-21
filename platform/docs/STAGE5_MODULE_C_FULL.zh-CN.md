@@ -37,7 +37,7 @@
 | 项目 | 固定值 |
 |---|---|
 | 仓库 | `https://github.com/SiennaDai/muon_research` |
-| 本文代码 commit | `ca6155e0271f4cb156c14bb48daeb29b6b728057` |
+| 本文代码 commit | `53ab79925eb8de6147c1d57e24392cb4e691410e` |
 | 分析脚本 | `analysis/structural_emergence/se_stage5_c_analyze.py` |
 | B 指标（随仓库） | `analysis/structural_emergence/stage5_b_metrics/` |
 | Checkpoint 数据集 | `siennadai/fp32-muon-ckpt-1536` |
@@ -73,7 +73,8 @@ top_Q, top_K, top_V, top_O
 
 `top_*` 使用 B 的 probe κ 最大 Head。
 
-- `g_S`：Role G 在子空间中的 block；一阶项 `g_SᵀΔW_S`；
+- `g_S`：**L_probe 在当前节点的梯度**在子空间中的 block（一次普通 backward，不是 Role G）；
+  一阶项 `g_SᵀΔW_S`；
 - `H_SS`：B 的 `q_h/q_hk` 子矩阵；二阶项 `½Σ q_hk`；
 - 实际项：把 role 的 `W_after-W_before` 只加到该 Head 子空间，前向计算
   `L(W+ΔW_S)-L(W)`；
@@ -83,6 +84,9 @@ top_Q, top_K, top_V, top_O
 
 > 这是**选定 Head 子空间**的损失变化，不是完整 optimizer step：
 > 辅助 AdamW 参数和其他 Muon block 保持不动。
+>
+> 重要：`first_order` 使用 **L_probe 梯度**，与 B 的 probe `q` 和 `actual L_probe` 同一口径；
+> 不能用 Role G（L_train 梯度）代替，否则 Taylor 与 actual 不可比。
 
 ## 3. Notebook Cells
 
@@ -93,7 +97,7 @@ top_Q, top_K, top_V, top_O
 set -euo pipefail
 BASE=/kaggle/working
 REPO="$BASE/muon_research"
-CODE_COMMIT="ca6155e0271f4cb156c14bb48daeb29b6b728057"
+CODE_COMMIT="53ab79925eb8de6147c1d57e24392cb4e691410e"
 
 if [ ! -d "$REPO/.git" ]; then
   rm -rf "$REPO"
