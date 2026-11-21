@@ -166,11 +166,23 @@ def head_loss(ckpt_root, data_root, b_dir, seeds, events, probe_windows=8):
             pairs = [val.window(i) for i in range(probe_windows)]
             x = torch.stack([p[0] for p in pairs]).to(device)
             y = torch.stack([p[1] for p in pairs]).to(device)
+            model.zero_grad(set_to_none=True)
+            with torch.enable_grad():
+                grad_loss = model(x, y)["loss"]
+                grad_loss.backward()
+            probe_g = {}
+            for layer in LAYERS[seed]:
+                g_attn = model.get_parameter(name_for(layer, "Q")).grad.detach()
+                g_proj = model.get_parameter(name_for(layer, "O")).grad.detach()
+                for kind in TYPES:
+                    source = g_proj if kind == "O" else g_attn
+                    for head in range(6):
+                        probe_g[(layer, kind, head)] = block(source, kind, head).detach()
+            model.zero_grad(set_to_none=True)
+            del grad_loss
             with torch.no_grad():
                 base = float(model(x, y)["loss"].detach())
             for layer in LAYERS[seed]:
-                name_attn = name_for(layer, "Q")
-                name_proj = name_for(layer, "O")
                 spec = {}
                 for kind in TYPES:
                     h, _ = top.get((seed, node, layer, kind), (0, 0.0))
@@ -185,8 +197,8 @@ def head_loss(ckpt_root, data_root, b_dir, seeds, events, probe_windows=8):
                         param_name = name_for(layer, kind)
                         delta_block = (block(roles[f"{param_name}|W_after"], kind, head).float()
                                        - block(roles[f"{param_name}|W_before"], kind, head).float())
-                        g_block = block(roles[f"{param_name}|G"], kind, head).float()
-                        first += float((g_block * delta_block).sum())
+                        first += float((probe_g[(layer, kind, head)] *
+                                        delta_block.to(device)).sum())
                         if param_name not in deltas:
                             deltas[param_name] = torch.zeros_like(model.get_parameter(param_name).detach())
                         add_block(deltas[param_name], delta_block.to(device), kind, head)
