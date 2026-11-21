@@ -30,7 +30,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "platform/src"))
 
 from config.recipe import load_recipe  # noqa: E402
-from data.frozen_tokens import FrozenWindows, load_manifest  # noqa: E402
+from data.frozen_tokens import DeterministicSampler, FrozenWindows, load_manifest  # noqa: E402
 from train_platform import build_model  # noqa: E402
 
 SEEDS = ("seed0", "seed1")
@@ -86,7 +86,7 @@ def subspace_angle(u: torch.Tensor, v: torch.Tensor, k: int = 4) -> float:
 
 def cosine(a: torch.Tensor, b: torch.Tensor) -> float:
     denom = a.norm() * b.norm()
-    return float((a * b).abs().sum() / denom) if denom > 0 else float("nan")
+    return float((a * b).sum().abs() / denom) if denom > 0 else float("nan")
 
 
 def split_qkv(dy: torch.Tensor):
@@ -395,7 +395,14 @@ def main():
             sidecar = json.loads((node_dir / f"pre_u{node:06d}.json").read_text())
             micro = sidecar.get("micro_batch_window_ids")
             if not micro:
-                ids = sidecar["window_ids"]
+                # Node 0 was saved before update 1, so its sidecar has no
+                # window ids.  Restore its pre-take sampler and take update 1.
+                sampler = DeterministicSampler(
+                    train.num_windows, cfg["experiment"]["data_seed"],
+                    cfg["data"]["allow_repeated_epochs"])
+                sampler.load_state_dict(checkpoint["sampler"])
+                ids = sampler.take(cfg["train"]["micro_batch_size"] *
+                                   cfg["train"]["accumulation_steps"])
                 micro = [ids[i * 4:(i + 1) * 4] for i in range(len(ids) // 4)]
             def batch(ids, split="train"):
                 source = train if split == "train" else val
