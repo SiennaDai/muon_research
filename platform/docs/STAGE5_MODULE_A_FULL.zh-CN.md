@@ -54,6 +54,19 @@
 
 节点 `u` 是 update u 开始前的状态；节点 0 使用 update 1 的 sidecar 窗口。
 
+### 1.1 已知修复：O 使用 c_proj 列块
+
+`c_proj.weight` 的形状是 `[384,384]`；它的 Head 块是**列块**（输入维度按 Head 拼接）。
+因此 O 的 Head 梯度必须是：
+
+```text
+O: G_h = dO^T A_h    # [384,64]
+```
+
+不是 `dO_h^T A`。旧实现在 Role 重放时会把 `[64,384]` 填进 `[384,64]` 的列块并报形状错误。
+当前 commit `c237f28` 已修正。Cell 2 的 Role 检查必须同时包含 6 个 `c_attn` 和 6 个
+`c_proj` 参数，共 12 行；这是本预检的形状守卫。
+
 ## 2. A 采集什么
 
 ### 2.1 前向
@@ -241,6 +254,10 @@ assert len(replay) == 12, len(replay)
 assert len(spectra) == 2, len(spectra)
 for r in replay:
     assert float(r['g_rel_error']) < 1e-4, r
+replay_keys = {(int(r['layer']), r['parameter']) for r in replay}
+assert len(replay_keys) == 12, replay_keys
+assert sum('c_attn' in name for _, name in replay_keys) == 6
+assert sum('c_proj' in name for _, name in replay_keys) == 6
 # every head group's share must sum to 1
 groups = {}
 for r in head:
@@ -318,6 +335,10 @@ assert len(replay) == 12, len(replay)
 assert len(list((out / 'spectra').glob('*.npz'))) == 2
 for r in replay:
     assert float(r['g_rel_error']) < 1e-4, r
+replay_keys = {(int(r['layer']), r['parameter']) for r in replay}
+assert len(replay_keys) == 12, replay_keys
+assert sum('c_attn' in name for _, name in replay_keys) == 6
+assert sum('c_proj' in name for _, name in replay_keys) == 6
 groups = {}
 for r in head:
     key = (r['seed'], r['node'], r['loss'], r['layer'], r['type'])
@@ -389,6 +410,11 @@ assert len(replay) == 480, len(replay)
 assert len(spectra) == 62, len(spectra)
 for r in replay:
     assert float(r['g_rel_error']) < 1e-4, r
+replay_keys = {(r['seed'], int(r['node']), int(r['layer']), r['parameter'])
+               for r in replay}
+assert len(replay_keys) == 480, len(replay_keys)
+assert sum('c_attn' in name for *_, name in replay_keys) == 240
+assert sum('c_proj' in name for *_, name in replay_keys) == 240
 groups = {}
 for r in head:
     key = (r['seed'], r['node'], r['loss'], r['layer'], r['type'])
