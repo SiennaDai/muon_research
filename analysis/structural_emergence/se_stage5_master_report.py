@@ -16,6 +16,7 @@ A = ROOT / "A/analysis"
 B = ROOT / "B/analysis"
 C = ROOT / "C/analysis"
 D = ROOT / "D/analysis"
+D2 = ROOT / "D/timeline"
 OUT = ROOT / "master"
 
 
@@ -39,6 +40,7 @@ def copy_figures():
         "D_curvature_seed.png": D / "figures/fig02_curvature_types.png",
         "D_coupling_seed.png": D / "figures/fig03_coupling_seed.png",
         "D_event_heads.png": D / "figures/fig05_event_heads.png",
+        "D2_l3_timeline.png": D2 / "figures/fig01_l3_top_heads.png",
     }
     paths = {}
     for name, source in selected.items():
@@ -93,7 +95,9 @@ def main():
                  "但 L0/L2/L4 的具体 Head 不同；")
     lines.append("- **类型/层级的集中模式、曲率序和 Muon 的 NS 规律是 seed-invariant**："
                  "Q/K 强烈集中，O 基本不集中；O/V 正曲率且强耦合，Q/K 近零/不定；NS 保留 Q/K/V 排序但重排 O；")
-    lines.append("- **L3 是两个 seed 的共同收敛层**：曲率/NS 先指向 H2，瞬时梯度随后跟上；")
+    lines.append("- **L3 是两个 seed 的晚期共同收敛层**：H2 在晚期成为共同 top head；"
+                 "但 D-2 全节点时间线显示 top-head 切换频繁，切换顺序 event/seed-specific，"
+                 "不能普遍化为“曲率/NS 领先梯度”。")
     lines.append("- **Head 级损失主要由 V/O 子空间承担**，Q/K 的梯度集中不等于 Q/K 承担主要损失变化。")
     lines.append("")
     lines.append("## 1. 研究问题与设计\n")
@@ -194,8 +198,15 @@ def main():
     lines.append("### 6.3 L3 收敛与时间顺序\n")
     lines.append("seed1 node 1312 L3：A 的瞬时梯度 top 是 H3，B 的曲率 top 是 H2，"
                  "C 的 U/ΔW top 是 H2；到 node 1536，A 的梯度也回到 H2。"
-                 "seed0 node 784 L3 的 A/B/C 直接一致指向 H2。"
-                 "因此：曲率/NS 先指向 H2，梯度随后跟上。")
+                 "seed0 node 784 L3 的 A/B/C 直接一致指向 H2。")
+    lines.append("")
+    lines.append("### 6.4 D-2 全节点时间线\n")
+    lines.append("D-2 展开 L3：A 31 节点、C 20 role 节点、B 8 Hessian 节点。")
+    lines.append("- seed0：A Q/K 在 384–512 已到 H2，C_U 576、B 768；看起来 A→C→B，"
+                 "但 C/B 节点覆盖稀疏。")
+    lines.append("- seed1 1312：B/C_U 已到 H2，而 A Q/K 仍是 H3；方向相反。")
+    lines.append("- A_G 的 Q/K top-head 在 seed0/seed1 分别切换 13/14 次；top-head argmax 噪声很大。")
+    lines.append("- 因此只保留“H2 晚期收敛稳健”，不保留“曲率/NS 普遍领先梯度”。")
     lines.append("")
     lines.append(f"![D gradient timing](figures/D_gradient_timing.png)")
     lines.append(f"![D curvature seed](figures/D_curvature_seed.png)")
@@ -207,7 +218,8 @@ def main():
     lines.append("2. 初始化和早期梯度选择具体路径：seed1 在 node 0 已有更强的 Q/K 不对称；")
     lines.append("3. 反向信号产生 Q/K Head 优势：Q/K 的 g_share 主要由 dY_h 承载；")
     lines.append("4. Muon/NS 把梯度优势转成更新分配：Q/K/V 排序保留，O 被重排；ΔW≈-lr·U；")
-    lines.append("5. 曲率/NS 在 L3 收敛到 H2：seed1 1312 的梯度仍是 H3，但 B/C 已指向 H2；")
+    lines.append("5. L3 晚期收敛到 H2：单事件上 B/C 可领先 A（seed1 1312），"
+                 "但 seed0 的顺序相反；D-2 表明 lead-lag 不是普遍规律。")
     lines.append("6. Head 级损失主要由 V/O 承担：Q/K 的梯度集中不等于 Q/K 承担主要损失变化。")
     lines.append("")
     lines.append("## 8. 对原假说的判断\n")
@@ -244,7 +256,8 @@ def main():
             "Central result",
             "Specific dominant-head identity is seed-dependent.",
             "Type/layer concentration, curvature order and NS rules are seed-invariant.",
-            "L3 converges to H2; curvature/NS lead the instantaneous gradient.",
+            "L3 converges to H2 at late nodes.",
+            "Lead-lag is event/seed-specific; D-2 shows noisy top-head switches.",
         ])
         text_page(pdf, "Data and validation", [
             f"A: {va['head_rows']} head rows, {va['replay_rows']} replay rows",
@@ -262,7 +275,7 @@ def main():
             "B_curvature.png", "B_cross_coupling.png", "B_cross_heatmap.png",
             "C_taylor_actual.png", "C_loss_subspace.png", "C_ns_preservation.png",
             "D_gradient_timing.png", "D_curvature_seed.png", "D_coupling_seed.png",
-            "D_event_heads.png",
+            "D_event_heads.png", "D2_l3_timeline.png",
         ):
             image_page(pdf, figures[name], name.replace("_", " "))
         text_page(pdf, "Integrated mechanism", [
@@ -270,7 +283,7 @@ def main():
             "2. Init/early gradient selects a seed-specific path.",
             "3. Backward signal creates Q/K head advantage.",
             "4. Muon/NS preserves Q/K/V ordering but reallocates O.",
-            "5. Curvature/NS converge to H2 at L3; gradient follows.",
+            "5. L3 converges to H2 late; no universal curvature/NS lead.",
             "6. Head-level loss is dominated by V/O, not by Q/K gradient concentration.",
             "",
             "Specific head identity: seed-dependent.",

@@ -282,9 +282,11 @@ def write_report(out, align, rank, coup, c):
                  "L0 Q/K/V 为 H3（O 为 H5），L5 全部为 H1。")
     lines.append("- **整体类型/层级模式高度一致**：两个 seed 都是 Q/K 强烈集中、O 基本保持 6 个有效 Head、"
                  "V 介于中间；B 的 O/V 高曲率/强耦合、Q/K 近零/不定也一致。")
-    lines.append("- **L3 是共同收敛层**：Q/K 在 seed0 784/seed1 1312 已由 A/B/C 指向 H2；"
-                 "O 的 NS 更新在 784 已指向 H2，曲率在 seed0 1312/seed1 1312 对齐；"
-                 "seed1 1312 时 Q/K 梯度 top 仍是 H3，到 1536 才回到 H2，提示曲率/NS 领先于瞬时梯度。")
+    lines.append("- **L3 是晚期共同收敛层，但 lead-lag 不是普遍规律**："
+                 "seed0 784 Q/K/V 的 A/B/C 均为 H2；O 的 A/B/C_G 为 H3，而 C_U 已是 H2。"
+                 "seed1 1312 的 B/C_U 已到 H2，而 A Q/K 仍是 H3。"
+                 "D-2 全节点时间线显示 top-head 切换频繁；seed0 的 A 甚至早于 B 到达 H2，"
+                 "因此不能把“曲率/NS 领先梯度”普遍化。")
     lines.append("")
     if not align.empty:
         l3 = align[align["layer"] == 3]
@@ -313,8 +315,9 @@ def write_report(out, align, rank, coup, c):
     lines.append("3. **反向信号产生 Q/K Head 优势**：A 中 Q/K g_share 主要由 dY_h 承载。")
     lines.append("4. **Muon/NS 把梯度优势转成更新分配**：C 中 Q/K/V 的 G→U 排序高度保持，"
                  "O 被重排；ΔW≈-lr·U。")
-    lines.append("5. **L3 的 Q/K 曲率/NS 先收敛到 H2**：seed1 1312 的瞬时梯度仍是 H3，但 B 曲率和 C U/ΔW 已指向 H2；"
-                 "到 1536 A 梯度也回到 H2。O 的曲率在 784 还未完全对齐，NS 已先指向 H2。")
+    lines.append("5. **L3 晚期收敛到 H2**：seed1 1312 的 B/C_U 已指向 H2 而 A Q/K 仍是 H3；"
+                 "但 seed0 的 A 在 384–512 已到 H2、B 到 768 才到 H2，顺序相反。"
+                 "D-2 的结论是“H2 晚期收敛稳健、切换顺序 event/seed-specific”，不是普遍 lead-lag。")
     lines.append("6. **Head 级损失主要由 V/O 承担**：Q/K 的梯度集中并不等于 Q/K 承担主要损失变化。")
     lines.append("")
     lines.append("## 6. 对原假说的判断\n")
@@ -328,6 +331,8 @@ def write_report(out, align, rank, coup, c):
     lines.append("- A/B/C 使用不同 loss 口径：A/B 是梯度/Hessian，C 是选定 Head 子空间；"
                  "彼此只能做机制对齐，不能做同一数学量的恒等比较。")
     lines.append("- C 的 actual ΔL 只在 L_probe 的两个事件节点；不是完整 optimizer step。")
+    lines.append("- D-2 时间线：`/mnt/d/muon_research/results/stage5/D/timeline/`；"
+                 "A 31 节点、C 20 role 节点、B 8 Hessian 节点，top-head argmax 有噪声。")
     path = out / "STAGE5_MODULE_D_FINDINGS.zh-CN.md"
     path.write_text("\n".join(lines) + "\n")
     return path
@@ -343,7 +348,7 @@ def make_pdf(out, figs):
             "",
             "Conclusion: specific head identity is seed-dependent;",
             "type-level concentration, curvature order and NS rules are seed-invariant.",
-            "L3 converges to H2 in both seeds, with curvature/NS leading the gradient.",
+            "L3 converges to H2 at late nodes; lead-lag is not universal (see D-2).",
         ])
         for fig in figs:
             image_page(pdf, fig, fig.stem.replace("_", " "))
