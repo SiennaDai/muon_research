@@ -67,6 +67,20 @@ O: G_h = dO^T A_h    # [384,64]
 当前 commit `c237f28` 已修正。Cell 2 的 Role 检查必须同时包含 6 个 `c_attn` 和 6 个
 `c_proj` 参数，共 12 行；这是本预检的形状守卫。
 
+### 1.2 正式运行实测（2026-11-21）
+
+Kernel `siennadai/a-fp32-muon` 已成功完成：
+
+- `head_dynamics.csv` 17856 行；
+- `microbatch.csv` 71424 行；
+- `replay_validation.csv` 480 行；
+- `spectra/` 62 个 NPZ；
+- replay 最大 G 误差 `7.07e-7`；
+- Train G share 与 Stage 1 G role 的最大绝对差 `1.66e-7`（完全对齐）；
+- 62 个 `(seed,node)`，每节点约 6–9 秒，峰值约 2293 MiB；
+- 输出已下载到 `/mnt/d/muon_research/results/stage5_a_final`；
+- 分析产物在 `/mnt/d/muon_research/results/stage5_a_analysis`。
+
 ## 2. A 采集什么
 
 ### 2.1 前向
