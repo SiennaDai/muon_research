@@ -11,12 +11,12 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 
-ROOT = Path("/mnt/d/muon_research/results")
-A = ROOT / "stage5_a_analysis"
-B = ROOT / "stage5_hessian_analysis"
-C = ROOT / "stage5_c_analysis"
-D = ROOT / "stage5_d_analysis"
-OUT = ROOT / "stage5_master"
+ROOT = Path("/mnt/d/muon_research/results/stage5")
+A = ROOT / "A/analysis"
+B = ROOT / "B/analysis"
+C = ROOT / "C/analysis"
+D = ROOT / "D/analysis"
+OUT = ROOT / "master"
 
 
 def j(path):

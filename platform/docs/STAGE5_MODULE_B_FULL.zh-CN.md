@@ -61,7 +61,7 @@ Kernel `siennadai/muon-hession-fp32` 已成功完成：
 - replay 最大误差：G `5.13e-7`，ΔW `2.62e-5`；
 - 交叉矩阵最大相对不对称：`6.87e-7`；
 - 16 个 `(seed,node)`，每节点约 287 秒，峰值约 4383 MiB；
-- 输出已下载到 `/mnt/d/muon_research/results/stage5_hessian_final`。
+- 输出已下载到 `/mnt/d/muon_research/results/stage5/B/raw`。
 
 Cell 5 的旧 `57600` 断言已改成 `20736`。
 

@@ -16,8 +16,8 @@ from matplotlib.backends.backend_pdf import PdfPages
 TYPES = ("Q", "K", "V", "O")
 COLORS = {"Q": "#1f77b4", "K": "#ff7f0e", "V": "#2ca02c", "O": "#d62728"}
 LAYERS = {"seed0": (0, 2, 3), "seed1": (0, 3, 4)}
-A_PATH = Path("/mnt/d/muon_research/results/stage5_a_final/stage5_a/head_dynamics.csv")
-B_DIR = Path("/mnt/d/muon_research/analysis/structural_emergence/stage5_b_metrics")
+A_PATH = Path("/mnt/d/muon_research/results/stage5/A/raw/stage5_a/head_dynamics.csv")
+B_DIR = Path("/mnt/d/muon_research/results/stage5/code/stage5_b_metrics")
 
 
 def setup():

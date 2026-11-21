@@ -20,10 +20,10 @@ from scipy.stats import spearmanr
 
 TYPES = ("Q", "K", "V", "O")
 COLORS = {"Q": "#1f77b4", "K": "#ff7f0e", "V": "#2ca02c", "O": "#d62728"}
-A_PATH = Path("/mnt/d/muon_research/results/stage5_a_final/stage5_a/head_dynamics.csv")
-B_DIR = Path("/mnt/d/muon_research/results/stage5_hessian_final/stage5_hessian")
-C_DIR = Path("/mnt/d/muon_research/results/stage5_c_final_v2/stage5_c")
-C_ANALYSIS = Path("/mnt/d/muon_research/results/stage5_c_analysis")
+A_PATH = Path("/mnt/d/muon_research/results/stage5/A/raw/stage5_a/head_dynamics.csv")
+B_DIR = Path("/mnt/d/muon_research/results/stage5/B/raw/stage5_hessian")
+C_DIR = Path("/mnt/d/muon_research/results/stage5/C/raw/stage5_c")
+C_ANALYSIS = Path("/mnt/d/muon_research/results/stage5/C/analysis")
 
 
 def setup():

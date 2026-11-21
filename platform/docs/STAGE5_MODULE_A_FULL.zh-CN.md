@@ -78,8 +78,8 @@ Kernel `siennadai/a-fp32-muon` 已成功完成：
 - replay 最大 G 误差 `7.07e-7`；
 - Train G share 与 Stage 1 G role 的最大绝对差 `1.66e-7`（完全对齐）；
 - 62 个 `(seed,node)`，每节点约 6–9 秒，峰值约 2293 MiB；
-- 输出已下载到 `/mnt/d/muon_research/results/stage5_a_final`；
-- 分析产物在 `/mnt/d/muon_research/results/stage5_a_analysis`。
+- 输出已下载到 `/mnt/d/muon_research/results/stage5/A/raw`；
+- 分析产物在 `/mnt/d/muon_research/results/stage5/A/analysis`。
 
 ## 2. A 采集什么
 
