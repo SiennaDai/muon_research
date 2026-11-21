@@ -32,7 +32,8 @@ HEAD_DIM = 64
 DEFAULT_B = ROOT / "analysis/structural_emergence/stage5_b_metrics"
 FIELDS = [
     "seed", "node", "layer", "L_base",
-    "q_QK", "q_VO", "I_H", "rho_H",
+    "q_QK", "q_VO", "I_H", "rho_H", "rho_H_reliable",
+    "dw_QK_fro", "dw_VO_fro", "rho_scale",
     "first_QK", "first_VO", "first_joint",
     "second_QK", "second_VO", "second_joint",
     "taylor_QK", "taylor_VO", "taylor_joint", "I_taylor",
@@ -139,18 +140,22 @@ def main():
                 taylor = {}
                 actual = {}
                 qsum = {}
+                dwnorm = {}
                 for label, blocks in groups.items():
                     first[label] = 0.0
                     qsum[label] = 0.0
+                    dwnorm[label] = 0.0
                     for kind, head in blocks:
                         pname = name_for(layer, kind)
                         dw = (block(roles[f"{pname}|W_after"], kind, head).float()
                               - block(roles[f"{pname}|W_before"], kind, head).float())
                         first[label] += float((probe_g[(layer, kind, head)] *
                                                dw.to(device)).sum())
+                        dwnorm[label] += float(dw.float().norm() ** 2)
                     for hk, hh in blocks:
                         for kk, kh in blocks:
                             qsum[label] += qmap.get((seed, node, layer, hk, hh, kk, kh), 0.0)
+                    dwnorm[label] = dwnorm[label] ** 0.5
                     taylor[label] = first[label] + 0.5 * qsum[label]
                 # Actual loss for each group.
                 for label, blocks in groups.items():
@@ -184,6 +189,9 @@ def main():
                     "seed": seed, "node": node, "layer": layer, "L_base": base,
                     "q_QK": q_qk, "q_VO": q_vo, "I_H": I_H,
                     "rho_H": I_H / denom if denom > 0 else float("nan"),
+                    "rho_H_reliable": bool(abs(q_qk) > 1e-12 and abs(q_vo) > 1e-12),
+                    "dw_QK_fro": dwnorm["QK"], "dw_VO_fro": dwnorm["VO"],
+                    "rho_scale": I_H / (dwnorm["QK"] * dwnorm["VO"]) if dwnorm["QK"] * dwnorm["VO"] > 0 else float("nan"),
                     "first_QK": first["QK"], "first_VO": first["VO"],
                     "first_joint": first["joint"],
                     "second_QK": 0.5 * q_qk, "second_VO": 0.5 * q_vo,
