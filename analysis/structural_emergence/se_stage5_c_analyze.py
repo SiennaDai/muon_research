@@ -33,6 +33,11 @@ TYPES = ("Q", "K", "V", "O")
 LAYERS = {"seed0": (0, 2, 3), "seed1": (0, 3, 4)}
 HEAD_DIM = 64
 DEFAULT_B = ROOT / "analysis/structural_emergence/stage5_b_metrics"
+VO_LAYERS = (0, 3)
+
+
+def available_types(layer):
+    return TYPES if layer in VO_LAYERS else ("Q", "K")
 ROLE_FIELDS = [
     "seed", "node", "layer", "type", "head",
     "g_fro", "m_fro", "d_fro", "u_fro", "dw_fro",
@@ -184,12 +189,14 @@ def head_loss(ckpt_root, data_root, b_dir, seeds, events, probe_windows=8):
                 base = float(model(x, y)["loss"].detach())
             for layer in LAYERS[seed]:
                 spec = {}
-                for kind in TYPES:
+                for kind in available_types(layer):
                     h, _ = top.get((seed, node, layer, kind), (0, 0.0))
                     spec[f"all_{kind}"] = [(kind, hh) for hh in range(6)]
                     spec[f"top_{kind}"] = [(kind, h)]
-                spec["all_QKV"] = [(k, hh) for k in ("Q", "K", "V") for hh in range(6)]
-                spec["all_attn"] = [(k, hh) for k in TYPES for hh in range(6)]
+                spec["all_QK"] = [(k, hh) for k in ("Q", "K") for hh in range(6)]
+                if layer in VO_LAYERS:
+                    spec["all_QKV"] = [(k, hh) for k in ("Q", "K", "V") for hh in range(6)]
+                    spec["all_attn"] = [(k, hh) for k in TYPES for hh in range(6)]
                 for label, blocks in spec.items():
                     deltas = {}
                     first = 0.0
