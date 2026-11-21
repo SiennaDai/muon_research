@@ -34,7 +34,7 @@
 | 项目 | 固定值 |
 |---|---|
 | 仓库 | `https://github.com/SiennaDai/muon_research` |
-| 代码 commit | `fac99cde9dbae71684377b6f8702d7fe6d1cdd6b` |
+| 代码 commit | `c7bf9dbd16fc1b52a8be601af516d3254ee802a0` |
 | 脚本 | `analysis/structural_emergence/se_stage5_c2_cross.py` |
 | B 指标 | `analysis/structural_emergence/stage5_b_metrics/` |
 | 节点 | 784, 1312 |
@@ -46,7 +46,8 @@
 
 ```text
 seed,node,layer,L_base,
-q_QK,q_VO,I_H,rho_H,
+q_QK,q_VO,I_H,rho_H,rho_H_reliable,
+dw_QK_fro,dw_VO_fro,rho_scale,
 first_QK,first_VO,first_joint,
 second_QK,second_VO,second_joint,
 taylor_QK,taylor_VO,taylor_joint,I_taylor,
@@ -57,7 +58,8 @@ I_actual_norm
 - `q_QK`：QK 内部所有 `q_hk` 之和；
 - `q_VO`：VO 内部所有 `q_hk` 之和；
 - `I_H`：QK×VO 交叉项；
-- `rho_H = I_H / sqrt(|q_QK q_VO|)`；
+- `rho_H = I_H / sqrt(|q_QK q_VO|)`；分母小时用 `rho_H_reliable` 标记；
+- `rho_scale = I_H / (||ΔW_QK||_F ||ΔW_VO||_F)`，比 `rho_H` 稳定；
 - `I_taylor`：Taylor 的交互项，应与 `I_H` 一致；
 - `I_actual`：实际损失交互；
 - `I_actual_norm = I_actual / (|ΔL_QK|+|ΔL_VO|)`。
@@ -71,7 +73,7 @@ I_actual_norm
 set -euo pipefail
 BASE=/kaggle/working
 REPO="$BASE/muon_research"
-CODE_COMMIT="fac99cde9dbae71684377b6f8702d7fe6d1cdd6b"
+CODE_COMMIT="c7bf9dbd16fc1b52a8be601af516d3254ee802a0"
 
 if [ ! -d "$REPO/.git" ]; then
   rm -rf "$REPO"
@@ -164,7 +166,8 @@ assert (out / 'COMPLETE').is_file()
 rows = list(csv.DictReader((out/'cross_interaction.csv').open()))
 assert len(rows) == 1, len(rows)
 r = rows[0]
-for key in ('I_H','I_taylor','I_actual','actual_QK','actual_VO','actual_joint'):
+for key in ('I_H','I_taylor','I_actual','actual_QK','actual_VO','actual_joint',
+            'dw_QK_fro','dw_VO_fro','rho_scale'):
     assert math.isfinite(float(r[key])), (key, r[key])
 assert abs(float(r['I_taylor']) - float(r['I_H'])) < 1e-8, (r['I_taylor'], r['I_H'])
 print(r)
@@ -274,7 +277,8 @@ assert (out/'COMPLETE').is_file()
 rows = list(csv.DictReader((out/'cross_interaction.csv').open()))
 assert len(rows) == 8, len(rows)
 for r in rows:
-    for key in ('I_H','I_taylor','I_actual','actual_QK','actual_VO','actual_joint'):
+    for key in ('I_H','I_taylor','I_actual','actual_QK','actual_VO','actual_joint',
+            'dw_QK_fro','dw_VO_fro','rho_scale'):
         assert math.isfinite(float(r[key])), (r, key)
     assert abs(float(r['I_taylor']) - float(r['I_H'])) < 1e-8, r
 print(json.dumps({"rows": len(rows), "summary": json.loads((out/'run_summary.json').read_text())}, indent=2))
@@ -288,7 +292,8 @@ PY
 - `I_actual` 是实际损失中的交互；`I_residual = I_actual - I_taylor` 衡量高阶项；
 - `I_actual < 0` 表示 QK+VO 联合更新比单独相加带来更多下降（协同）；
 - `I_actual > 0` 表示抵消/干扰；
-- `rho_H` 给出归一化交叉强度，但 Q/K 的 q 很小时可能不稳定，需结合 `q_QK/q_VO`。
+- `rho_H` 给出归一化交叉强度，但 Q/K 的 q 很小时可能不稳定，需结合 `q_QK/q_VO` 和 `rho_H_reliable`；
+- `rho_scale` 是更稳定的尺度归一化；`rho_Euc` 需要 `HΔW_VO` 向量，当前 B 未保存，本轮不计算。
 
 ## 5. 失败时
 
