@@ -33,7 +33,7 @@
 | 项目 | 固定值 |
 |---|---|
 | 仓库 | `https://github.com/SiennaDai/muon_research` |
-| 本文代码 commit | `d8b5a0944d2b52e3fe81f492a7571484a3320e82` |
+| 本文代码 commit | `c237f28257382e95b2fd88c0bbc29be8527155db` |
 | 采集脚本 | `analysis/structural_emergence/se_stage5_a_collect.py` |
 | Checkpoint 数据集 | `siennadai/fp32-muon-ckpt-1536` |
 | 数据 | `siennadai/lowp-benchmark-slimpajama-8x-v1` |
@@ -75,8 +75,8 @@
 ### 2.3 每 Head 梯度
 
 ```text
-Q/K/V:  G_h = (dY_h)^T X_l        # [64,384]
-O:      G_h = (dO_h)^T A_l        # [64,384]
+Q/K/V:  G_h = (dY_h)^T X_l              # [64,384]
+O:      G_h = (dO)^T A_l[:, head]        # [384,64]  (c_proj 列块)
 ```
 
 - L_train：8 个 micro-batch 的 `G_h` 相加，得到该 update 的实际梯度；
@@ -96,7 +96,7 @@ cos_g_dy, cos_g_x, angle_g_dy4, angle_g_x4,
 clip_coef, total_grad_norm
 ```
 
-其中 `input` 对 Q/K/V 是 `X`，对 O 是 `A`。
+其中 `input` 对 Q/K/V 是 `X_l`，对 O 是 `A_l` 的对应 64 维 Head 列块。
 
 `microbatch.csv` 保存 8 个 micro-batch 的：
 `g_fro, cos_to_total, g_share_mb`。
@@ -118,7 +118,7 @@ clip_coef, total_grad_norm
 set -euo pipefail
 BASE=/kaggle/working
 REPO="$BASE/muon_research"
-CODE_COMMIT="d8b5a0944d2b52e3fe81f492a7571484a3320e82"
+CODE_COMMIT="c237f28257382e95b2fd88c0bbc29be8527155db"
 
 if [ ! -d "$REPO/.git" ]; then
   rm -rf "$REPO"
