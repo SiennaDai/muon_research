@@ -140,8 +140,8 @@ def compute_metrics(model, cap, layer, loss_name):
             "da": fl(dah.norm()), "dp": fl(dP.norm()), "ds": fl(dS.norm()),
             "ent": fl(ent.mean()), "amax": fl(Ah.max()),
             "q": fl(qq.norm()), "k": fl(kk.norm()), "v": fl(vv.norm()),
-            "dyq_fro": fl(dy_q[:, h].norm()), "dyk_fro": fl(dy_k[:, h].norm()),
-            "dyv_fro": fl(dy_v[:, h].norm()),
+            "dy_q_fro": fl(dy_q[:, h].norm()), "dy_k_fro": fl(dy_k[:, h].norm()),
+            "dy_v_fro": fl(dy_v[:, h].norm()),
         })
 
     rows = []
