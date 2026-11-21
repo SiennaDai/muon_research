@@ -14,7 +14,9 @@ from matplotlib.backends.backend_pdf import PdfPages
 ROOT = Path("/mnt/d/muon_research/results/stage5")
 A = ROOT / "A/analysis"
 B = ROOT / "B/analysis"
-C = ROOT / "C/analysis"
+C_ROOT = ROOT / "C"
+C = C_ROOT / "analysis"
+C2 = C_ROOT / "cross_interaction/analysis"
 D = ROOT / "D/analysis"
 D2 = ROOT / "D/timeline"
 OUT = ROOT / "master"
@@ -41,6 +43,7 @@ def copy_figures():
         "D_coupling_seed.png": D / "figures/fig03_coupling_seed.png",
         "D_event_heads.png": D / "figures/fig05_event_heads.png",
         "D2_l3_timeline.png": D2 / "figures/fig01_l3_top_heads.png",
+        "C2_interaction.png": C2 / "figures/fig01_interaction_scatter.png",
     }
     paths = {}
     for name, source in selected.items():
@@ -99,6 +102,8 @@ def main():
                  "但 D-2 全节点时间线显示 top-head 切换频繁，切换顺序 event/seed-specific，"
                  "不能普遍化为“曲率/NS 领先梯度”。")
     lines.append("- **Head 级损失主要由 V/O 子空间承担**，Q/K 的梯度集中不等于 Q/K 承担主要损失变化。")
+    lines.append("- **C-2 没有发现 QK–VO 的强局部协同**：`I_H`、`I_actual` 都在 `1e-7` 量级，"
+                 "相对独立损失变化的交互不到 1%；Q/K 的集中不能用 QK–VO 的二阶损失交互解释。")
     lines.append("")
     lines.append("## 1. 研究问题与设计\n")
     lines.append("研究链路：")
@@ -185,6 +190,15 @@ def main():
     lines.append(f"![C loss subspace](figures/C_loss_subspace.png)")
     lines.append(f"![C NS preservation](figures/C_ns_preservation.png)")
     lines.append("")
+    lines.append("### 5.5 C-2：QK–VO 交互\n")
+    lines.append("在 784/1312 的 L0/L3 上：`I_H` 最大约 `2.5e-7`，`I_actual` 最大约 `9.5e-7`，"
+                 "`I_actual_norm` 最大约 `0.0074`；`I_actual` 只有 4/8 为正。")
+    lines.append("`I_taylor` 与 `I_H` 精确一致，但与 `I_actual` 的符号并不总一致，"
+                 "高阶残差常常大于二阶项。结论：在当前 L_probe 和事件节点上，"
+                 "没有证据支持 QK–VO 强协同；Q/K 的梯度集中不是由 QK–VO 局部损失交互直接解释的。")
+    lines.append("")
+    lines.append(f"![C2 interaction](figures/C2_interaction.png)")
+    lines.append("")
     lines.append("## 6. Module D — Cross-Seed Mechanism\n")
     lines.append("### 6.1 具体 Head 身份 seed-dependent\n")
     lines.append("seed0：L2/L3 全部 H2，L4 全部 H0，L0 Q/K H5（V/O H2）；"
@@ -221,6 +235,8 @@ def main():
     lines.append("5. L3 晚期收敛到 H2：单事件上 B/C 可领先 A（seed1 1312），"
                  "但 seed0 的顺序相反；D-2 表明 lead-lag 不是普遍规律。")
     lines.append("6. Head 级损失主要由 V/O 承担：Q/K 的梯度集中不等于 Q/K 承担主要损失变化。")
+    lines.append("7. C-2 未发现 QK–VO 强协同；Q/K 的角色更可能与本层路由、L_train 或其他层交互有关，"
+                 "不能由事件点的局部 probe 交叉项解释。")
     lines.append("")
     lines.append("## 8. 对原假说的判断\n")
     lines.append("支持“过参数化提供候选路径、初始化影响具体路径、梯度和曲率决定优化条件、"
@@ -275,7 +291,7 @@ def main():
             "B_curvature.png", "B_cross_coupling.png", "B_cross_heatmap.png",
             "C_taylor_actual.png", "C_loss_subspace.png", "C_ns_preservation.png",
             "D_gradient_timing.png", "D_curvature_seed.png", "D_coupling_seed.png",
-            "D_event_heads.png", "D2_l3_timeline.png",
+            "D_event_heads.png", "D2_l3_timeline.png", "C2_interaction.png",
         ):
             image_page(pdf, figures[name], name.replace("_", " "))
         text_page(pdf, "Integrated mechanism", [
@@ -285,6 +301,7 @@ def main():
             "4. Muon/NS preserves Q/K/V ordering but reallocates O.",
             "5. L3 converges to H2 late; no universal curvature/NS lead.",
             "6. Head-level loss is dominated by V/O, not by Q/K gradient concentration.",
+            "C-2: QK-VO local interaction is tiny; no strong synergy at 784/1312.",
             "",
             "Specific head identity: seed-dependent.",
             "Type-level pattern: seed-invariant.",
