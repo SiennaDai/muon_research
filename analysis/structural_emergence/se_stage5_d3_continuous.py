@@ -246,8 +246,10 @@ def write_report(out, df, rc):
     lines.append("- B 的 signed-κ 与 |κ|-top 在 Q/K 上明显不同：例如 seed0 node 32 Q "
                  "signed 是 H4、|κ| 是 H0；seed0 node 512 Q signed 是 H4、|κ| 是 H2。"
                  "负曲率使“最大代数值”和“最大绝对曲率”回答不同问题。")
-    lines.append("- 跨方法 rank correlation 通常不高，说明“哪个 Head 排第一”非常依赖指标；"
-                 "但类型级模式（Q/K 集中、O 不集中）仍稳定。")
+    lines.append("- 连续 rank correlation 比 argmax 稳定得多：A_G vs C_G 为 1.0；"
+                 "A_G vs B_abs 约 0.77/0.81；A_G vs B_signed 约 0.59/0.49；"
+                 "A_G vs C_U 约 0.63/0.74。说明具体 Head 排序仍依赖指标，"
+                 "尤其 B 的 signed/abs 口径，但连续指标不是纯噪声。")
     lines.append("")
     if not rc.empty:
         lines.append("## 4. 跨方法 rank correlation\n")
@@ -258,7 +260,9 @@ def write_report(out, df, rc):
         lines.append("")
     lines.append("## 5. 结论\n")
     lines.append("- 连续指标支持：Q/K 的集中是真实的类型级现象，O 基本不集中。")
-    lines.append("- 但具体 Head 的排序对指标和节点很敏感；不建议再为了追求 lead-lag 补 Hessian。")
+    lines.append("- 连续指标显示：A_G 与 B_abs 的排序相关明显高于 A_G 与 B_signed，"
+                 "说明负曲率使 signed-κ 的 Head 排序更不稳定；A_G 与 C_U 中等相关。")
+    lines.append("- 因此具体 Head 的排序对指标和节点很敏感；不建议再为了追求 lead-lag 补 Hessian。")
     lines.append("- 下一步应转向 A-2：为什么 ΔY 会在 Head 间不均匀，而不是继续追 Top Head 排名。")
     path = out / "STAGE5_D3_CONTINUOUS.zh-CN.md"
     path.write_text("\n".join(lines) + "\n")

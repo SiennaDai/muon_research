@@ -104,6 +104,8 @@ def main():
     lines.append("- **Head 级损失主要由 V/O 子空间承担**，Q/K 的梯度集中不等于 Q/K 承担主要损失变化。")
     lines.append("- **C-2 没有发现 QK–VO 的强局部协同**：`I_H`、`I_actual` 都在 `1e-7` 量级，"
                  "相对独立损失变化的交互不到 1%；Q/K 的集中不能用 QK–VO 的二阶损失交互解释。")
+    lines.append("- **D-3 连续指标**显示 top-head argmax 有噪声，但 A_G 与 B_abs 的排序相关约 "
+                 "`0.77/0.81`，与 B_signed 仅 `0.59/0.49`；负曲率使 signed-κ 排序更不稳定。")
     lines.append("")
     lines.append("## 1. 研究问题与设计\n")
     lines.append("研究链路：")
@@ -222,6 +224,13 @@ def main():
     lines.append("- A_G 的 Q/K top-head 在 seed0/seed1 分别切换 13/14 次；top-head argmax 噪声很大。")
     lines.append("- 因此只保留“H2 晚期收敛稳健”，不保留“曲率/NS 普遍领先梯度”。")
     lines.append("")
+    lines.append("### 6.5 D-3 连续指标\n")
+    lines.append("D-3 补了 top-1 share、top-2、margin、effective heads 和完整排序。"
+                 "A_G 与 C_G 的排序完全一致；A_G 与 B_abs 约 `0.77/0.81`，"
+                 "与 B_signed 约 `0.59/0.49`，与 C_U 约 `0.63/0.74`。"
+                 "具体 Head 排序仍依赖指标，尤其 B 的 signed/abs 口径；"
+                 "但连续指标不是纯噪声，类型级模式仍稳定。")
+    lines.append("")
     lines.append(f"![D gradient timing](figures/D_gradient_timing.png)")
     lines.append(f"![D curvature seed](figures/D_curvature_seed.png)")
     lines.append(f"![D coupling seed](figures/D_coupling_seed.png)")
@@ -302,6 +311,8 @@ def main():
             "5. L3 converges to H2 late; no universal curvature/NS lead.",
             "6. Head-level loss is dominated by V/O, not by Q/K gradient concentration.",
             "C-2: QK-VO local interaction is tiny; no strong synergy at 784/1312.",
+            "D-3: continuous ranks are not pure noise (A_G vs B_abs ~0.77/0.81),",
+            "but signed-kappa ranks are less stable.",
             "",
             "Specific head identity: seed-dependent.",
             "Type-level pattern: seed-invariant.",
