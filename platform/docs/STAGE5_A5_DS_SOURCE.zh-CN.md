@@ -51,14 +51,14 @@ eta_p,h   = ||dA_h V_hᵀ||² / (||dA_h||² ||V_h||²)
 ```
 
 采集粒度：每个 `(seed,node,loss,layer,head,window)` 一行。  
-probe 8 个窗口；train 使用 checkpoint sidecar 的 4 个 micro-batch 组、每组 4 个窗口，共 16 个窗口。
+probe 8 个窗口；train 使用 checkpoint sidecar 的 8 个 micro-batch 组、每组 4 个窗口，共 32 个窗口。
 
 ## 2. 代码与输出
 
 脚本由 Cell 1 检出：
 
 ```text
-commit 5198d06
+commit 83731b2
 analysis/structural_emergence/se_stage5_a5_ds_source.py
 ```
 
@@ -75,8 +75,8 @@ ds_source_metrics.csv
 
 行数：
 
-- 预检（seed0 / node 784）：6 层 ×6 Head ×（8 probe +16 train）= **864 行**
-- 正式：62 个 `(seed,node)` → **53,568 行**（probe 17,856；train 35,712）
+- 预检（seed0 / node 784）：6 层 ×6 Head ×（8 probe +32 train）= **1440 行**
+- 正式：62 个 `(seed,node)` → **89,280 行**（probe 17,856；train 71,424）
 
 ## 3. Notebook Cells
 
@@ -87,7 +87,7 @@ ds_source_metrics.csv
 set -euo pipefail
 BASE=/kaggle/working
 REPO="$BASE/muon_research"
-CODE_COMMIT="5198d06e474011d8daace1dd0e491c20335e3ece"
+CODE_COMMIT="83731b27015e27994ac6d8d83e33035b4957ee64"
 
 if [ ! -d "$REPO/.git" ]; then
   rm -rf "$REPO"
@@ -131,7 +131,7 @@ test -f "$CKPT_ROOT/seed0/node_checkpoints/pre_u000784.pt"
 
 ### Cell 2 — 预检（seed0 / node 784，probe+train）
 
-预期：864 行；probe 288、train 576；恒等式与边界通过。
+预期：1440 行；probe 288、train 1152；恒等式与边界通过。
 
 ```bash
 %%bash
@@ -178,10 +178,10 @@ from pathlib import Path
 out = Path(sys.argv[1])
 assert (out / 'COMPLETE').is_file()
 rows = list(csv.DictReader((out / 'ds_source_metrics.csv').open()))
-assert len(rows) == 864, len(rows)
+assert len(rows) == 1440, len(rows)
 counts = Counter(r['loss'] for r in rows)
 assert counts['probe'] == 288, counts
-assert counts['train'] == 576, counts
+assert counts['train'] == 1152, counts
 nums = ['da2', 'v2', 'dp2', 'eta_p', 'm2', 'dot_dp_m', 'c2', 'ds2',
         'c_ratio', 'g', 'attn_entropy', 'attn_max_excl0', 'a2_fro',
         'frac_cancel_gt50', 'ds_top10_share',
@@ -201,7 +201,7 @@ win = defaultdict(set)
 for r in rows:
     win[(r['loss'], r['layer'], r['head'])].add(int(r['window']))
 for key, s in win.items():
-    assert len(s) == (8 if key[0] == 'probe' else 16), (key, len(s))
+    assert len(s) == (8 if key[0] == 'probe' else 32), (key, len(s))
 print('A-5 preflight OK:', len(rows), 'rows; max c2 identity err', max_id)
 PY
 touch "$PRE/PREFLIGHT_OK"
@@ -255,9 +255,9 @@ from pathlib import Path
 out = Path(sys.argv[1])
 assert (out / 'COMPLETE').is_file()
 rows = list(csv.DictReader((out / 'ds_source_metrics.csv').open()))
-assert len(rows) == 864, len(rows)
+assert len(rows) == 1440, len(rows)
 counts = Counter(r['loss'] for r in rows)
-assert counts['probe'] == 288 and counts['train'] == 576, counts
+assert counts['probe'] == 288 and counts['train'] == 1152, counts
 print('A-5 preflight OK')
 PY
   touch "$PRE/PREFLIGHT_OK"
@@ -308,10 +308,10 @@ from pathlib import Path
 out = Path('/kaggle/working/stage5_a5')
 assert (out / 'COMPLETE').is_file()
 rows = list(csv.DictReader((out / 'ds_source_metrics.csv').open()))
-assert len(rows) == 53568, len(rows)
+assert len(rows) == 89280, len(rows)
 counts = Counter(r['loss'] for r in rows)
 assert counts['probe'] == 17856, counts
-assert counts['train'] == 35712, counts
+assert counts['train'] == 71424, counts
 nums = ['da2', 'v2', 'dp2', 'eta_p', 'm2', 'dot_dp_m', 'c2', 'ds2',
         'c_ratio', 'g', 'attn_entropy', 'attn_max_excl0', 'a2_fro',
         'frac_cancel_gt50', 'ds_top10_share',
@@ -348,7 +348,7 @@ du -sh /kaggle/working/stage5_a5
 
 ## 5. 失败时
 
-- Cell 2 行数不是 864：先看 `stage5_a5_preflight/run.log`。train 行数取决于 sidecar 的 micro-batch 结构；若每组窗口数不同，按实际调整预检断言。
+- Cell 2 行数不是 1440：先看 `stage5_a5_preflight/run.log`。train 行数取决于 sidecar 的 micro-batch 结构；若每组窗口数不同，按实际调整预检断言。
 - 恒等式失败：检查 `layer_rows` 的 `m2`/`dot_dp_m` 定义；`m2 = T Σ_i m_i²`。
 - Cell 4 没有 `COMPLETE`：检查 `stage5_a5/run.log`。
 - 显存不足：把 `--probe-windows` 降到 4，或把 train 的 micro 组拆开跑。
