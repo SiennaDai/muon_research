@@ -13,6 +13,7 @@ from matplotlib.backends.backend_pdf import PdfPages
 
 ROOT = Path("/mnt/d/muon_research/results/stage5")
 A = ROOT / "A/analysis"
+A2F = ROOT / "A/attention_source/analysis"
 B = ROOT / "B/analysis"
 C_ROOT = ROOT / "C"
 C = C_ROOT / "analysis"
@@ -32,6 +33,7 @@ def copy_figures():
     selected = {
         "A_gradient_concentration.png": A / "figures/fig01_top_share.png",
         "A_gradient_source.png": A / "figures/fig04_source.png",
+        "A2_source_correlations.png": A2F / "figures/fig03_source_correlations.png",
         "B_curvature.png": B / "figures/fig01_kappa_overview.png",
         "B_cross_coupling.png": B / "figures/fig04_cross_groups.png",
         "B_cross_heatmap.png": B / "figures/fig05_cross_seed0_L3.png",
@@ -106,6 +108,9 @@ def main():
                  "相对独立损失变化的交互不到 1%；Q/K 的集中不能用 QK–VO 的二阶损失交互解释。")
     lines.append("- **D-3 连续指标**显示 top-head argmax 有噪声，但 A_G 与 B_abs 的排序相关约 "
                  "`0.77/0.81`，与 B_signed 仅 `0.59/0.49`；负曲率使 signed-κ 排序更不稳定。")
+    lines.append("- **A-2** 把 `ΔY` 分解为 `dA`、attention entropy、score 和 Q/K/V 范数："
+                 "`dA` 份额解释 `dY` 份额约 `0.75–0.80`，低 entropy 对应更高 `dY`；"
+                 "Q/K 的集中是上游误差经 attention/score 几何放大，而不是单纯按 `dA` 分配。")
     lines.append("")
     lines.append("## 1. 研究问题与设计\n")
     lines.append("研究链路：")
@@ -148,6 +153,17 @@ def main():
     lines.append("")
     lines.append(f"![A gradient concentration](figures/A_gradient_concentration.png)")
     lines.append(f"![A gradient source](figures/A_gradient_source.png)")
+    lines.append("")
+    lines.append("### 3.4 A-2：ΔY 的来源分解\n")
+    lines.append("A-2 在 31 节点上采集 attention 概率、`dA`、`dP/dS` 与 `dQ/dK/dV`，"
+                 "并验证分解与 c_attn 梯度的 rel 约 `1e-6`。")
+    lines.append("- `dY_share` 与 `dA_share` 的 Spearman：Q `0.75`、K `0.77`、V `0.80`；")
+    lines.append("- `dY_share` 与 attention entropy：Q `-0.26`、K `-0.21`、V `-0.17`；")
+    lines.append("- seed0 784 L3 H2 的 dA share 只有约 `0.25`，但 Q/K dY share 达到 `0.75/0.82`，"
+                 "说明 attention 聚焦/score 几何进一步放大了 Q/K 的 Head 集中；")
+    lines.append("- A 的 `g_share` 与 A-2 `dy_share` 的 Spearman：Q `0.83`、K `0.77`、V `0.60`。")
+    lines.append("")
+    lines.append(f"![A2 source correlations](figures/A2_source_correlations.png)")
     lines.append("")
     lines.append("## 4. Module B — Loss Landscape & Hessian\n")
     lines.append("### 4.1 曲率的类型序\n")
@@ -301,6 +317,7 @@ def main():
             "C_taylor_actual.png", "C_loss_subspace.png", "C_ns_preservation.png",
             "D_gradient_timing.png", "D_curvature_seed.png", "D_coupling_seed.png",
             "D_event_heads.png", "D2_l3_timeline.png", "C2_interaction.png",
+            "A2_source_correlations.png",
         ):
             image_page(pdf, figures[name], name.replace("_", " "))
         text_page(pdf, "Integrated mechanism", [
@@ -311,6 +328,8 @@ def main():
             "5. L3 converges to H2 late; no universal curvature/NS lead.",
             "6. Head-level loss is dominated by V/O, not by Q/K gradient concentration.",
             "C-2: QK-VO local interaction is tiny; no strong synergy at 784/1312.",
+            "A-2: dA explains ~0.75-0.80 of dY; lower attention entropy -> higher dY.",
+            "Q/K concentration is amplified by attention/score geometry.",
             "D-3: continuous ranks are not pure noise (A_G vs B_abs ~0.77/0.81),",
             "but signed-kappa ranks are less stable.",
             "",
