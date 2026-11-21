@@ -59,6 +59,7 @@ def fl(x):
 
 
 def cos_abs(a, b):
+    a = a.detach(); b = b.detach()
     denom = a.norm() * b.norm()
     return float((a * b).sum().abs() / denom) if denom > 0 else float("nan")
 
@@ -120,6 +121,13 @@ def compute_metrics(model, cap, layer, loss_name):
     dy_q = dy[:, :, :384].reshape(B, T, 6, HEAD_DIM).permute(0, 2, 1, 3)
     dy_k = dy[:, :, 384:768].reshape(B, T, 6, HEAD_DIM).permute(0, 2, 1, 3)
     dy_v = dy[:, :, 768:].reshape(B, T, 6, HEAD_DIM).permute(0, 2, 1, 3)
+    # The captured c_attn gradient is in the unrotated Q/K frame.  The
+    # decomposition produces dQ/dK in the rotated frame; rotate the captured
+    # gradient before comparing (the rotation is orthogonal).
+    dy_q_rot, dy_k_rot = apply_rotary_emb(
+        dy_q.permute(0, 2, 1, 3), dy_k.permute(0, 2, 1, 3), freqs)
+    dy_q_rot = dy_q_rot.permute(0, 2, 1, 3)
+    dy_k_rot = dy_k_rot.permute(0, 2, 1, 3)
 
     per_head = []
     for h in range(6):
@@ -135,7 +143,7 @@ def compute_metrics(model, cap, layer, loss_name):
         dK = torch.matmul(dS.transpose(-1, -2), qq) * scale
         ent = -(Ah.clamp_min(1e-12) * Ah.clamp_min(1e-12).log()).sum(-1)
         per_head.append({
-            "dy_q": dy_q[:, h], "dy_k": dy_k[:, h], "dy_v": dy_v[:, h],
+            "dy_q": dy_q_rot[:, h], "dy_k": dy_k_rot[:, h], "dy_v": dy_v[:, h],
             "dQ": dQ, "dK": dK, "dV": dV,
             "da": fl(dah.norm()), "dp": fl(dP.norm()), "ds": fl(dS.norm()),
             "ent": fl(ent.mean()), "amax": fl(Ah.max()),
