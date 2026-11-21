@@ -21,7 +21,7 @@
 | 项目 | 固定值 |
 |---|---|
 | 仓库 | `https://github.com/SiennaDai/muon_research` |
-| 代码 commit | `916a91732534dff78d357a4f2fc2308fb007c004` |
+| 代码 commit | `c003e580fffd0bb176268ab43705f82887ab9ea4` |
 | 脚本 | `analysis/structural_emergence/se_stage5_a2_attention.py` |
 | 节点 | 全部 31 个 Stage 4 节点 |
 | Seeds | seed0 / seed1 |
@@ -72,7 +72,7 @@ q_fro,k_fro,v_fro,dy_share,da_share
 set -euo pipefail
 BASE=/kaggle/working
 REPO="$BASE/muon_research"
-CODE_COMMIT="916a91732534dff78d357a4f2fc2308fb007c004"
+CODE_COMMIT="c003e580fffd0bb176268ab43705f82887ab9ea4"
 
 if [ ! -d "$REPO/.git" ]; then
   rm -rf "$REPO"
