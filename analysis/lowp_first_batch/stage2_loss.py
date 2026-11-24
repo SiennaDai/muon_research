@@ -321,6 +321,9 @@ def perturb_group_abs(x: torch.Tensor, kind: str, group: str,
             if en > 0:
                 out[:, sl] = b + e * (per_block / en)
     return out
+
+
+def load_node(ckpt_root: Path, seed: str, node: int):
     d = ckpt_root / seed / "node_checkpoints"
     ckpt = torch.load(d / f"pre_u{node:06d}.pt", map_location="cpu",
                       weights_only=False)
