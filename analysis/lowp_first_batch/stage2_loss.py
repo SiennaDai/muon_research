@@ -240,10 +240,11 @@ def band_perturb(x: torch.Tensor, ref_d: torch.Tensor, idx, alpha: float,
 
 
 def band_perturb_abs(x: torch.Tensor, ref_d: torch.Tensor, idx,
-                     alpha_abs: float, gen: torch.Generator) -> torch.Tensor:
-    """Perturb one band with ||E|| = alpha_abs * ||ref_d|| (matched absolute)."""
+                     alpha_abs: float, target_norm: float,
+                     gen: torch.Generator) -> torch.Tensor:
+    """Perturb one band with ||E|| = alpha_abs * target_norm."""
     u, s, vt = torch.linalg.svd(ref_d, full_matrices=False)
-    target = alpha_abs * float(ref_d.norm())
+    target = alpha_abs * target_norm
     if target <= 0:
         return x.clone()
     e = torch.randn(x.shape, generator=gen, device=x.device, dtype=x.dtype)
@@ -684,7 +685,9 @@ def main() -> None:
                                             xq[kind] = band_perturb_abs(
                                                 roles[kind][space],
                                                 roles[kind]["D"], idx,
-                                                alpha_abs, gen)
+                                                alpha_abs,
+                                                float(roles[kind][space].norm()),
+                                                gen)
                                         u_q = ({k: ns(xq[k]) for k in ("QKV", "O")}
                                                if space == "D" else xq)
                                         d_q = delta_from_u(roles, u_q, lr, wd)
@@ -714,8 +717,8 @@ def main() -> None:
                                     for noise in range(noise_seeds):
                                         gen = torch.Generator(device="cpu")
                                         gen.manual_seed(4000 * (noise + 1) + layer)
-                                        qkv_norm = float(roles["QKV"]["D"].norm())
-                                        o_norm = float(roles["O"]["D"].norm())
+                                        qkv_norm = float(roles["QKV"][space].norm())
+                                        o_norm = float(roles["O"][space].norm())
                                         combined = math.sqrt(qkv_norm ** 2 + o_norm ** 2)
                                         if group == "VO":
                                             targets = {"QKV": combined / math.sqrt(2),

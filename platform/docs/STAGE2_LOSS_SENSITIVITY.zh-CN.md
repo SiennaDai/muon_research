@@ -33,7 +33,7 @@
 | Probe | validation windows 0–7（2048 token） |
 | 状态 | `G, M_prev, D, U, W` |
 | 格式 | BF16、INT8 per-head（L1）；per-tensor/head/block、8/4-bit（L4） |
-| 预期行数 | L1 80；L2 288；L3 576；L4 80；L2abs 192；L3abs 384；合计 1600 |
+| 预期行数 | L1 80；L2 288；L3 576；L4 80；L2abs 288；L3abs 576；合计 1888 |
 
 说明：本轮只用 784/1312，因为这两个节点在 `fp32-muon-ckpt-1536` 里有完整
 `pre_u*_roles.pt`。128/1536 的 roles 在旧 Snapshot 数据集里，暂不纳入，避免额外挂载
@@ -280,7 +280,7 @@ out = Path(sys.argv[1])
 assert (out / 'COMPLETE').is_file()
 expected = {'l1_loss.csv': 80, 'l2_loss.csv': 288,
             'l3_loss.csv': 576, 'l4_loss.csv': 80,
-            'l2abs_loss.csv': 192, 'l3abs_loss.csv': 384}
+            'l2abs_loss.csv': 288, 'l3abs_loss.csv': 576}
 for name, n in expected.items():
     rows = list(csv.DictReader((out / name).open()))
     assert len(rows) == n, (name, len(rows), n)
@@ -309,7 +309,7 @@ head -80 "$OUT/SUMMARY.md"
   - QK 只扰动 c_attn 的 Q/K 行；VO 扰动 V 行 + O 列；其余组只扰动对应矩阵。
 - **L4**：D/U × per-tensor / per-head / per-block / 8-bit / 4-bit。看粒度与位宽的 loss 收益。
   - `block` 默认 head 对齐；块大小 64/128。
-- **L2abs**：同 L2，但用 **matched-absolute** 扰动：`‖E_band‖ = α_abs·‖D‖`，所有 band 相同；α_abs=3%/7%。
+- **L2abs**：同 L2，但用 **matched-absolute** 扰动：`‖E_band‖ = α_abs·‖X‖`，其中 `X` 是该 space 的 D 或 U；所有 band 相同。α_abs=3%/7%。
   - 用来回答“Tail 与 Top/Middle 的误差在同等绝对大小下，谁更伤 loss”。
 - **L3abs**：同 L3，但用 **matched-absolute**：所有 group 的扰动总范数相同。
   - 用来确认 QK/VO 的差异不是组大小造成的。
