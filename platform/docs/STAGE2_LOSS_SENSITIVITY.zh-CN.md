@@ -26,7 +26,7 @@
 | 项目 | 固定值 |
 |---|---|
 | 仓库 | `https://github.com/SiennaDai/muon_research` |
-| 代码 commit | 执行前填写 `TARGET_COMMIT` |
+| 代码 commit | `f44e522bc89b939811dd16b7aac36ffb80258f43` |
 | 脚本 | `analysis/lowp_first_batch/stage2_loss.py` |
 | 节点 | 784, 1312 |
 | 层 | L0, L3 |
@@ -79,7 +79,7 @@ state,format,space,band,group,alpha,noise,granularity,bits,block_size
 set -euo pipefail
 BASE=/kaggle/working
 REPO="$BASE/muon_research"
-CODE_COMMIT="TARGET_COMMIT"  # 执行前填写
+CODE_COMMIT="f44e522bc89b939811dd16b7aac36ffb80258f43"
 
 if [ ! -d "$REPO/.git" ]; then
   rm -rf "$REPO"
