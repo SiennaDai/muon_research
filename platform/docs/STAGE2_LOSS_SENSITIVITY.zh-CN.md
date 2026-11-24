@@ -33,7 +33,7 @@
 | Probe | validation windows 0–7（2048 token） |
 | 状态 | `G, M_prev, D, U, W` |
 | 格式 | BF16、INT8 per-head（L1）；per-tensor/head/block、8/4-bit（L4） |
-| 预期行数 | L1 80；L2 288；L3 576；L4 80；合计 1024 |
+| 预期行数 | L1 80；L2 288；L3 576；L4 80；L2abs 192；L3abs 384；合计 1600 |
 
 说明：本轮只用 784/1312，因为这两个节点在 `fp32-muon-ckpt-1536` 里有完整
 `pre_u*_roles.pt`。128/1536 的 roles 在旧 Snapshot 数据集里，暂不纳入，避免额外挂载
@@ -46,6 +46,11 @@ l1_loss.csv
 l2_loss.csv
 l3_loss.csv
 l4_loss.csv
+l2abs_loss.csv
+l3abs_loss.csv
+summary.csv
+SUMMARY.md
+summary.json
 run_summary.json
 COMPLETE
 ```
@@ -54,7 +59,7 @@ COMPLETE
 
 ```text
 seed,node,layer,module,
-L_base,L_ref,L_q,L_w_only,dL_ref,dL_q,loss_gap,rel_gap,sign_ok,
+L_base,L_ref,L_q,L_w_only,dL_ref,dL_q,loss_gap,rel_gap,sign_ok,sign_match,
 rel_state,rel_U,cos_U,share_L1_U,top1_U,
 rel_W,share_L1_W,top1_W,
 state,format,space,band,group,alpha,noise,granularity,bits,block_size
@@ -65,7 +70,8 @@ state,format,space,band,group,alpha,noise,granularity,bits,block_size
 - `L_w_only`：仅 W 量化、未加 `ΔW_ref` 的前向 loss（仅 L1-W 行）；
 - `loss_gap = L_q − L_ref`，正 = 比 FP32 差；
 - `rel_gap = |loss_gap| / |dL_ref|`；
-- `sign_ok = dL_q < 0`：loss 是否仍下降；
+- `sign_match = sign(dL_q) == sign(dL_ref)`：量化步与 FP32 步的 loss 变化方向是否一致；
+- `sign_ok = dL_q < 0` 仅作旧字段保留；L_probe 上 `dL_ref` 可能为正，不要用它做判据；
 - `rel_state`：被量化状态本身的相对 Frobenius 误差；
 - `rel_U / share_L1_U / top1_U`：更新方向/结构指标；
 - `rel_W / share_L1_W / top1_W`：仅 W 量化时使用。
@@ -126,8 +132,8 @@ test -f "$REPO/analysis/lowp_first_batch/stage2_loss.py"
 
 ### Cell 2 — 冒烟（全部模块各一个条件）
 
-预期：`smoke_l1.csv`、`smoke_l2.csv`、`smoke_l3.csv`、`smoke_l4.csv` 各 1 行；
-`COMPLETE` 存在。
+预期：`smoke_l1.csv`、`smoke_l2.csv`、`smoke_l3.csv`、`smoke_l4.csv`、
+`smoke_l2abs.csv`、`smoke_l3abs.csv` 各 1 行；`COMPLETE` 存在。
 
 ```bash
 %%bash
@@ -172,7 +178,8 @@ import csv, math, sys
 from pathlib import Path
 out = Path(sys.argv[1])
 assert (out / 'COMPLETE').is_file()
-for name in ('smoke_l1.csv', 'smoke_l2.csv', 'smoke_l3.csv', 'smoke_l4.csv'):
+for name in ('smoke_l1.csv', 'smoke_l2.csv', 'smoke_l3.csv',
+             'smoke_l4.csv', 'smoke_l2abs.csv', 'smoke_l3abs.csv'):
     rows = list(csv.DictReader((out / name).open()))
     assert len(rows) == 1, (name, len(rows))
     r = rows[0]
@@ -180,7 +187,8 @@ for name in ('smoke_l1.csv', 'smoke_l2.csv', 'smoke_l3.csv', 'smoke_l4.csv'):
         assert math.isfinite(float(r[key])), (name, key, r[key])
     print(name, {k: r[k] for k in ('state', 'format', 'space', 'band',
                                    'group', 'alpha', 'granularity',
-                                   'bits', 'loss_gap', 'rel_gap', 'sign_ok')})
+                                   'bits', 'loss_gap', 'rel_gap',
+                                   'sign_match')})
 print('smoke OK')
 PY
 
@@ -258,18 +266,21 @@ test -f "$OUT/COMPLETE" || { echo "Stage 2 did not complete"; exit 1; }
 echo "COMPLETE"
 ```
 
-### Cell 5 — 验收
+### Cell 5 — 验收与 Kaggle 内分析
 
 ```bash
 %%bash
 set -euo pipefail
-python - <<'PY'
-import csv, json, math
+REPO=/kaggle/working/muon_research
+OUT=/kaggle/working/stage2_loss
+python - "$OUT" <<'PY'
+import csv, json, math, sys
 from pathlib import Path
-out = Path('/kaggle/working/stage2_loss')
+out = Path(sys.argv[1])
 assert (out / 'COMPLETE').is_file()
 expected = {'l1_loss.csv': 80, 'l2_loss.csv': 288,
-            'l3_loss.csv': 576, 'l4_loss.csv': 80}
+            'l3_loss.csv': 576, 'l4_loss.csv': 80,
+            'l2abs_loss.csv': 192, 'l3abs_loss.csv': 384}
 for name, n in expected.items():
     rows = list(csv.DictReader((out / name).open()))
     assert len(rows) == n, (name, len(rows), n)
@@ -279,6 +290,13 @@ for name, n in expected.items():
     print(name, len(rows), 'OK')
 print(json.dumps(json.loads((out / 'run_summary.json').read_text()), indent=2))
 PY
+
+cd "$REPO"
+python -u analysis/lowp_first_batch/analyze_stage2.py --dir "$OUT"
+test -f "$OUT/SUMMARY.md"
+test -f "$OUT/summary.csv"
+echo "--- SUMMARY.md —"
+head -80 "$OUT/SUMMARY.md"
 ```
 
 ## 4. 模块解释
@@ -291,13 +309,18 @@ PY
   - QK 只扰动 c_attn 的 Q/K 行；VO 扰动 V 行 + O 列；其余组只扰动对应矩阵。
 - **L4**：D/U × per-tensor / per-head / per-block / 8-bit / 4-bit。看粒度与位宽的 loss 收益。
   - `block` 默认 head 对齐；块大小 64/128。
+- **L2abs**：同 L2，但用 **matched-absolute** 扰动：`‖E_band‖ = α_abs·‖D‖`，所有 band 相同；α_abs=3%/7%。
+  - 用来回答“Tail 与 Top/Middle 的误差在同等绝对大小下，谁更伤 loss”。
+- **L3abs**：同 L3，但用 **matched-absolute**：所有 group 的扰动总范数相同。
+  - 用来确认 QK/VO 的差异不是组大小造成的。
 
 ## 5. 解释
 
-- `loss_gap > 0`：量化步比 FP32 差；`rel_gap` 是相对 FP32 一步 loss 下降的比例。
-- `sign_ok = 0`：量化后 loss 不再下降，是强警告。
+- `loss_gap > 0`：量化步比 FP32 差；`rel_gap` 是相对 FP32 一步 loss 变化的比例。
+- `sign_match = 0`：量化步与 FP32 步的 loss 变化方向不一致；这是比旧 `sign_ok` 更合适的判据。
 - `rel_U` 高但 `loss_gap` 小：误差落在低曲率方向；`rel_U` 低但 `loss_gap` 大：误差落在高曲率方向。
 - `share_L1_U` 大但 `loss_gap` 小：结构被破坏但短期 loss 不明显，累积阶段要重点看。
+- L2 是 band 内相对误差；L2abs 是 band 间绝对误差。两者不能混着比较。
 
 ## 6. 失败时
 

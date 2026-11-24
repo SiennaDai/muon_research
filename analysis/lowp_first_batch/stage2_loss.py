@@ -239,6 +239,21 @@ def band_perturb(x: torch.Tensor, ref_d: torch.Tensor, idx, alpha: float,
     return x + eb * (alpha * nb / en)
 
 
+def band_perturb_abs(x: torch.Tensor, ref_d: torch.Tensor, idx,
+                     alpha_abs: float, gen: torch.Generator) -> torch.Tensor:
+    """Perturb one band with ||E|| = alpha_abs * ||ref_d|| (matched absolute)."""
+    u, s, vt = torch.linalg.svd(ref_d, full_matrices=False)
+    target = alpha_abs * float(ref_d.norm())
+    if target <= 0:
+        return x.clone()
+    e = torch.randn(x.shape, generator=gen, device=x.device, dtype=x.dtype)
+    eb = project_band(e, u, vt, idx)
+    en = float(eb.norm())
+    if en <= 0:
+        return x.clone()
+    return x + eb * (target / en)
+
+
 def group_mask(kind: str, group: str) -> list[tuple[str, slice]]:
     """Return (type, slice) blocks for a group on QKV or O."""
     if kind == "QKV":
@@ -279,7 +294,33 @@ def perturb_group(x: torch.Tensor, kind: str, group: str, alpha: float,
     return out
 
 
-def load_node(ckpt_root: Path, seed: str, node: int):
+def perturb_group_abs(x: torch.Tensor, kind: str, group: str,
+                      alpha_abs: float, target_norm: float,
+                      gen: torch.Generator) -> torch.Tensor:
+    """Perturb one group with total ||E|| = alpha_abs * target_norm."""
+    blocks = group_mask(kind, group)
+    if not blocks:
+        return x.clone()
+    out = x.clone()
+    per_block = alpha_abs * target_norm / math.sqrt(len(blocks))
+    if per_block <= 0:
+        return out
+    for typ, sl in blocks:
+        if kind == "QKV":
+            b = out[sl, :]
+            e = torch.randn(b.shape, generator=gen, device=x.device,
+                            dtype=x.dtype)
+            en = float(e.norm())
+            if en > 0:
+                out[sl, :] = b + e * (per_block / en)
+        else:
+            b = out[:, sl]
+            e = torch.randn(b.shape, generator=gen, device=x.device,
+                            dtype=x.dtype)
+            en = float(e.norm())
+            if en > 0:
+                out[:, sl] = b + e * (per_block / en)
+    return out
     d = ckpt_root / seed / "node_checkpoints"
     ckpt = torch.load(d / f"pre_u{node:06d}.pt", map_location="cpu",
                       weights_only=False)
@@ -395,6 +436,7 @@ def base_metrics(l_base, l_ref, l_q, d_l_ref, d_l_q):
         "dL_ref": d_l_ref, "dL_q": d_l_q,
         "loss_gap": gap, "rel_gap": rel_gap,
         "sign_ok": int(d_l_q < 0),
+        "sign_match": int((d_l_q >= 0) == (d_l_ref >= 0)),
     }
 
 
@@ -407,10 +449,12 @@ def main() -> None:
     parser.add_argument("--nodes", default="784,1312")
     parser.add_argument("--layers", default="0,3")
     parser.add_argument("--probe-windows", type=int, default=8)
-    parser.add_argument("--module", choices=("L1", "L2", "L3", "L4", "all"),
+    parser.add_argument("--module",
+                        choices=("L1", "L2", "L3", "L4", "L2abs", "L3abs", "all"),
                         default="all")
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--alpha", default="0.05,0.10")
+    parser.add_argument("--alpha-abs", default="0.03,0.07")
     parser.add_argument("--noise-seeds", type=int, default=3)
     parser.add_argument("--l4-states", default="D,U")
     args = parser.parse_args()
@@ -421,19 +465,22 @@ def main() -> None:
     nodes = tuple(int(x) for x in args.nodes.split(","))
     layers = tuple(int(x) for x in args.layers.split(","))
     alphas = tuple(float(x) for x in args.alpha.split(","))
+    alphas_abs = tuple(float(x) for x in args.alpha_abs.split(","))
     if args.smoke:
         seeds, nodes, layers = ("seed0",), (784,), (0,)
         alphas = (0.10,)
+        alphas_abs = (0.07,)
 
     device = torch.device("cuda:0")
     set_math()
     fields_common = ["seed", "node", "layer", "module",
                      "L_base", "L_ref", "L_q", "L_w_only",
                      "dL_ref", "dL_q",
-                     "loss_gap", "rel_gap", "sign_ok",
+                     "loss_gap", "rel_gap", "sign_ok", "sign_match",
                      "rel_state", "rel_U", "cos_U", "share_L1_U", "top1_U",
                      "rel_W", "share_L1_W", "top1_W"]
-    modules = ("L1", "L2", "L3", "L4") if args.module == "all" else (args.module,)
+    modules = (("L1", "L2", "L3", "L4", "L2abs", "L3abs")
+               if args.module == "all" else (args.module,))
     writers = {}
     handles = {}
     for module in modules:
@@ -607,6 +654,89 @@ def main() -> None:
                                                             d_l_ref, l_q - l_base)
                                         emit("L3", space=space, group=group,
                                              alpha=alpha, noise=noise,
+                                             rel_state=m["rel"], rel_U=m["rel"],
+                                             cos_U=m["cos"],
+                                             share_L1_U=m["share_L1"],
+                                             top1_U=m["top1"], **base)
+
+                    # L2abs
+                    if "L2abs" in modules:
+                        for space in ("D", "U"):
+                            for band in BANDS:
+                                for alpha_abs in alphas_abs:
+                                    if args.smoke and not (
+                                            space == "D" and band == "tail"
+                                            and alpha_abs == alphas_abs[0]):
+                                        continue
+                                    noise_seeds = 1 if args.smoke else args.noise_seeds
+                                    for noise in range(noise_seeds):
+                                        gen = torch.Generator(device="cpu")
+                                        gen.manual_seed(3000 * (noise + 1) + layer)
+                                        xq = {}
+                                        for kind in ("QKV", "O"):
+                                            idx = split_bands(
+                                                torch.linalg.svd(
+                                                    roles[kind]["D"],
+                                                    full_matrices=False)[1])[band]
+                                            xq[kind] = band_perturb_abs(
+                                                roles[kind][space],
+                                                roles[kind]["D"], idx,
+                                                alpha_abs, gen)
+                                        u_q = ({k: ns(xq[k]) for k in ("QKV", "O")}
+                                               if space == "D" else xq)
+                                        d_q = delta_from_u(roles, u_q, lr, wd)
+                                        l_q = eval_delta(model, x, y, layer, d_q)
+                                        m = aggregate_metrics(
+                                            {k: roles[k]["U"] for k in ("QKV", "O")},
+                                            u_q)
+                                        base = base_metrics(l_base, l_ref, l_q,
+                                                            d_l_ref, l_q - l_base)
+                                        emit("L2abs", space=space, band=band,
+                                             alpha=alpha_abs, noise=noise,
+                                             rel_state=m["rel"], rel_U=m["rel"],
+                                             cos_U=m["cos"],
+                                             share_L1_U=m["share_L1"],
+                                             top1_U=m["top1"], **base)
+
+                    # L3abs
+                    if "L3abs" in modules:
+                        for space in ("D", "U"):
+                            for group in ("QK", "VO", "Q", "K", "V", "O"):
+                                for alpha_abs in alphas_abs:
+                                    if args.smoke and not (
+                                            space == "D" and group == "QK"
+                                            and alpha_abs == alphas_abs[0]):
+                                        continue
+                                    noise_seeds = 1 if args.smoke else args.noise_seeds
+                                    for noise in range(noise_seeds):
+                                        gen = torch.Generator(device="cpu")
+                                        gen.manual_seed(4000 * (noise + 1) + layer)
+                                        qkv_norm = float(roles["QKV"]["D"].norm())
+                                        o_norm = float(roles["O"]["D"].norm())
+                                        combined = math.sqrt(qkv_norm ** 2 + o_norm ** 2)
+                                        if group == "VO":
+                                            targets = {"QKV": combined / math.sqrt(2),
+                                                       "O": combined / math.sqrt(2)}
+                                        elif group == "O":
+                                            targets = {"QKV": 0.0, "O": combined}
+                                        else:
+                                            targets = {"QKV": combined, "O": 0.0}
+                                        xq = {}
+                                        for kind in ("QKV", "O"):
+                                            xq[kind] = perturb_group_abs(
+                                                roles[kind][space], kind, group,
+                                                alpha_abs, targets[kind], gen)
+                                        u_q = ({k: ns(xq[k]) for k in ("QKV", "O")}
+                                               if space == "D" else xq)
+                                        d_q = delta_from_u(roles, u_q, lr, wd)
+                                        l_q = eval_delta(model, x, y, layer, d_q)
+                                        m = aggregate_metrics(
+                                            {k: roles[k]["U"] for k in ("QKV", "O")},
+                                            u_q)
+                                        base = base_metrics(l_base, l_ref, l_q,
+                                                            d_l_ref, l_q - l_base)
+                                        emit("L3abs", space=space, group=group,
+                                             alpha=alpha_abs, noise=noise,
                                              rel_state=m["rel"], rel_U=m["rel"],
                                              cos_U=m["cos"],
                                              share_L1_U=m["share_L1"],
