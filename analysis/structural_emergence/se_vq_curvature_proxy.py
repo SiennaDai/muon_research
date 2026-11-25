@@ -138,6 +138,7 @@ def main() -> None:
 
     cfg = load_recipe(ROOT / f"platform/recipes/structural_emergence_30m_fp32_muon_s{args.seed[-1]}.json")
     manifest = load_manifest(Path(args.data_root) / "manifest.json")
+    train = FrozenWindows(manifest, "train", 256)
     val = FrozenWindows(manifest, "validation", 256)
     model = build_model(cfg, device)
     engine = HessianEngine(model, device)
@@ -159,7 +160,7 @@ def main() -> None:
         sidecar = json.loads((node_dir / f"pre_u{node:06d}.json").read_text())
 
         def batch(ids, split):
-            source = val
+            source = train if split == "train" else val
             items = [source.window(i) for i in ids]
             return (torch.stack([p[0] for p in items]).to(device),
                     torch.stack([p[1] for p in items]).to(device))
