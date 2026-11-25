@@ -65,14 +65,19 @@ for repo, ref, path in ((MUON, MUON_REF, "/kaggle/working/muon_research"),
 import glob
 from pathlib import Path
 
-def resolve(pattern, suffix=""):
-    hits = sorted(glob.glob(pattern, recursive=True))
+def resolve(name, suffix=""):
+    # 先试精确路径（Kaggle 新旧两种挂载形式），找不到再做递归搜索兜底。
+    for base in (Path("/kaggle/input/datasets/siennadai"), Path("/kaggle/input/siennadai")):
+        candidate = base / name
+        if candidate.is_dir():
+            return candidate / suffix if suffix else candidate
+    hits = sorted(glob.glob(f"/kaggle/input/**/{name}", recursive=True))
     if not hits:
-        raise SystemExit(f"not found: {pattern}")
+        raise SystemExit(f"not found: {name}")
     return Path(hits[0]) / suffix if suffix else Path(hits[0])
 
-CKPT = resolve("/kaggle/input/**/fp32-muon-ckpt-1536", "structural_concentration_ckpt")
-DATA = resolve("/kaggle/input/**/lowp-benchmark-slimpajama-8x-v1", "slimpajama_8x")
+CKPT = resolve("fp32-muon-ckpt-1536", "structural_concentration_ckpt")
+DATA = resolve("lowp-benchmark-slimpajama-8x-v1", "slimpajama_8x")
 BOOK = Path("/kaggle/working/benchmark-experiments/reports/"
             "muon_vector_int3_robustness/calibration_codebooks.pt")
 
@@ -140,7 +145,7 @@ for cand in ("base", "C", "C3"):
 ## 8. 跑完之后
 
 ```bash
-kaggle kernels output <owner>/<kernel> -p /tmp/kout-proxy \
+kaggle kernels output siennadai/<你的-kernel-名> -p /tmp/kout-proxy \
   --file-pattern '(summary\.json|curvature_proxy\.csv|\.log)$'
 ```
 
