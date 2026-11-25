@@ -18,7 +18,7 @@
 | 项目 | 固定值 |
 |---|---|
 | 代码仓库 | `https://github.com/SiennaDai/muon_research` |
-| 代码 commit | **`39c7259`** |
+| 代码 commit | **`7e6f8f7`** |
 | 脚本 | `analysis/structural_emergence/se_vq_curvature_proxy.py` |
 | 码本仓库 | `https://github.com/SiennaDai/benchmark-experiments`，commit **`ba2d39d`** |
 | Checkpoint 数据集 | `siennadai/fp32-muon-ckpt-1536`（根目录 `structural_concentration_ckpt`） |
@@ -45,7 +45,7 @@
 import os, subprocess
 
 MUON = "https://github.com/SiennaDai/muon_research.git"
-MUON_REF = "39c7259"
+MUON_REF = "7e6f8f7"
 BENCH = "https://github.com/SiennaDai/benchmark-experiments.git"
 BENCH_REF = "ba2d39d"
 
